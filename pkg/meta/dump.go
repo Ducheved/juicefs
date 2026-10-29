@@ -368,17 +368,17 @@ func (dm *DumpedMeta) writeJsonWithOutTree(w io.Writer) (*bufio.Writer, error) {
 
 func (m *baseMeta) loadDumpedQuotas(ctx Context, dm *DumpedMeta) {
 	for inode, q := range dm.Quotas {
-		if _, err := m.en.doSetQuota(ctx, DirQuotaType, uint64(inode), &Quota{q.MaxSpace, q.MaxInodes, q.UsedSpace, q.UsedInodes, 0, 0}); err != nil {
+		if _, err := m.en.doSetQuota(ctx, DirQuotaType, uint64(inode), &Quota{MaxSpace: q.MaxSpace, MaxInodes: q.MaxInodes, UsedSpace: q.UsedSpace, UsedInodes: q.UsedInodes}); err != nil {
 			logger.Warnf("set dir quota (inode=%d): %s", inode, err)
 		}
 	}
 	for uid, q := range dm.UserQuotas {
-		if _, err := m.en.doSetQuota(ctx, UserQuotaType, uid, &Quota{q.MaxSpace, q.MaxInodes, q.UsedSpace, q.UsedInodes, 0, 0}); err != nil {
+		if _, err := m.en.doSetQuota(ctx, UserQuotaType, uid, &Quota{MaxSpace: q.MaxSpace, MaxInodes: q.MaxInodes, UsedSpace: q.UsedSpace, UsedInodes: q.UsedInodes}); err != nil {
 			logger.Warnf("set user quota (uid=%d): %s", uid, err)
 		}
 	}
 	for gid, q := range dm.GroupQuotas {
-		if _, err := m.en.doSetQuota(ctx, GroupQuotaType, gid, &Quota{q.MaxSpace, q.MaxInodes, q.UsedSpace, q.UsedInodes, 0, 0}); err != nil {
+		if _, err := m.en.doSetQuota(ctx, GroupQuotaType, gid, &Quota{MaxSpace: q.MaxSpace, MaxInodes: q.MaxInodes, UsedSpace: q.UsedSpace, UsedInodes: q.UsedInodes}); err != nil {
 			logger.Warnf("set group quota (gid=%d): %s", gid, err)
 		}
 	}

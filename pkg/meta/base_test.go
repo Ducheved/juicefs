@@ -111,6 +111,18 @@ func TestRedisClient(t *testing.T) {
 	testMeta(t, m)
 }
 
+func TestRedisDirQuotaRefresh(t *testing.T) {
+	testDirQuotaRefresh(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newRedisMeta("redis", "127.0.0.1:6379/10", conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		return m
+	})
+}
+
 func TestKeyDB(t *testing.T) { // skip mutate
 	if os.Getenv("SKIP_NON_CORE") == "true" {
 		t.Skipf("skip non-core test")
@@ -4948,6 +4960,123 @@ func checkEntry(t *testing.T, m Meta, srcEntry, dstEntry *Entry, dstParentIno In
 		if !bytes.Equal(v1, v2) {
 			t.Fatalf("xattr not equal")
 		}
+	}
+}
+
+func testDirQuotaRefresh(t *testing.T, newClient func() Meta) {
+	m1, m2 := newClient(), newClient()
+	if err := m1.Reset(); err != nil {
+		t.Fatalf("reset meta: %s", err)
+	}
+	if err := m1.Init(testFormat(), false); err != nil {
+		t.Fatalf("init meta: %s", err)
+	}
+	if _, err := m2.Load(true); err != nil {
+		t.Fatalf("load meta: %s", err)
+	}
+	ctx := Background()
+	mkdir := func(m Meta, parent Ino, name string) Ino {
+		var ino Ino
+		var attr Attr
+		if st := m.Mkdir(ctx, parent, name, 0755, 0, 0, &ino, &attr); st != 0 {
+			t.Fatalf("mkdir %s: %s", name, st)
+		}
+		return ino
+	}
+	create := func(m Meta, parent Ino, name string) syscall.Errno {
+		var ino Ino
+		var attr Attr
+		st := m.Create(ctx, parent, name, 0644, 0, 0, &ino, &attr)
+		if st == 0 {
+			m.Close(ctx, ino)
+		}
+		return st
+	}
+	setQuota := func(p string, maxInodes int64) {
+		if err := m2.HandleQuota(ctx, QuotaSet, p, DirQuotaType, map[string]*Quota{p: {MaxSpace: 1 << 30, MaxInodes: maxInodes}}, false, false, false); err != nil {
+			t.Fatalf("set quota %s: %s", p, err)
+		}
+	}
+	usage := func(p string) int64 {
+		qs := make(map[string]*Quota)
+		if err := m2.HandleQuota(ctx, QuotaGet, p, DirQuotaType, qs, false, false, false); err != nil || qs[p] == nil {
+			t.Fatalf("get quota %s: %v", p, err)
+		}
+		return qs[p].UsedInodes
+	}
+	flush := func(ms ...Meta) {
+		for _, m := range ms {
+			m.getBase().doFlushDirStat()
+			m.getBase().doFlushQuotas()
+		}
+	}
+	refresh := func(m Meta) {
+		time.Sleep(m.getBase().conf.Heartbeat)
+		m.getBase().loadQuotas()
+	}
+	rename := func(m Meta, src Ino, dst Ino, name string) {
+		var ino Ino
+		var attr Attr
+		if st := m.Rename(ctx, src, name, dst, name, 0, &ino, &attr); st != 0 {
+			t.Fatalf("rename %s: %s", name, st)
+		}
+	}
+
+	a, b := mkdir(m1, RootInode, "qa"), mkdir(m1, RootInode, "qb")
+	for i := 0; i < 50; i++ {
+		mkdir(m1, RootInode, fmt.Sprintf("q%d", i))
+		setQuota(fmt.Sprintf("/q%d", i), 100)
+	}
+	setQuota("/qa", 100)
+	setQuota("/qb", 4)
+	for _, m := range []Meta{m1, m2} {
+		if err := m.NewSession(true); err != nil {
+			t.Fatalf("new session: %s", err)
+		}
+		defer m.CloseSession()
+	}
+	if n := len(m1.getBase().dirQuotas); n != 0 {
+		t.Fatalf("dir quotas loaded at start: %d", n)
+	}
+
+	x := mkdir(m1, a, "x")
+	y := mkdir(m1, x, "y")
+	if st := create(m1, y, "f1"); st != 0 {
+		t.Fatalf("create f1: %s", st)
+	}
+	flush(m1)
+	if n := len(m1.getBase().dirQuotas); n != 1 {
+		t.Fatalf("cached dir quotas: %d", n)
+	}
+	rename(m2, a, b, "x")
+	flush(m2)
+	if ua, ub := usage("/qa"), usage("/qb"); ua != 0 || ub != 3 {
+		t.Fatalf("usage after foreign rename: /qa=%d /qb=%d", ua, ub)
+	}
+	refresh(m1)
+	if st := create(m1, y, "f2"); st != 0 {
+		t.Fatalf("create f2: %s", st)
+	}
+	flush(m1)
+	if ua, ub := usage("/qa"), usage("/qb"); ua != 0 || ub != 4 {
+		t.Fatalf("usage after refresh: /qa=%d /qb=%d", ua, ub)
+	}
+	if st := create(m1, x, "f3"); st != syscall.EDQUOT {
+		t.Fatalf("create in full /qb: %s", st)
+	}
+
+	setQuota("/qb/x/y", 1)
+	refresh(m1)
+	if st := create(m1, y, "f4"); st != syscall.EDQUOT {
+		t.Fatalf("create under new quota: %s", st)
+	}
+	if err := m2.HandleQuota(ctx, QuotaDel, "/qb/x/y", DirQuotaType, nil, false, false, false); err != nil {
+		t.Fatalf("delete quota: %s", err)
+	}
+	setQuota("/qb", 100)
+	refresh(m1)
+	if st := create(m1, y, "f4"); st != 0 {
+		t.Fatalf("create after quota removed: %s", st)
 	}
 }
 

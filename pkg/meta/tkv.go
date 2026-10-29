@@ -3630,7 +3630,7 @@ func (m *kvMeta) doDelQuota(ctx Context, qtype uint32, key uint64) error {
 	})
 }
 
-func (m *kvMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
+func (m *kvMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
 	format := m.getFormat()
 	dirQuotas := make(map[uint64]*Quota)
 	userQuotas := make(map[uint64]*Quota)
@@ -3644,12 +3644,18 @@ func (m *kvMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota
 		decode  func(k string) uint64
 	}{
 		{format.DirStats, "QD", "dir", dirQuotas, func(k string) uint64 { return uint64(m.decodeInode([]byte(k[2:]))) }}, // skip prefix
-		{format.UserGroupQuota, "QU", "user", userQuotas, func(k string) uint64 { return binary.BigEndian.Uint64([]byte(k[2:])) }},
-		{format.UserGroupQuota, "QG", "group", groupQuotas, func(k string) uint64 { return binary.BigEndian.Uint64([]byte(k[2:])) }},
+		{format.UserGroupQuota && scope.userGroup, "QU", "user", userQuotas, func(k string) uint64 { return binary.BigEndian.Uint64([]byte(k[2:])) }},
+		{format.UserGroupQuota && scope.userGroup, "QG", "group", groupQuotas, func(k string) uint64 { return binary.BigEndian.Uint64([]byte(k[2:])) }},
 	}
 
 	for _, qt := range quotaTypes {
 		if !qt.enabled {
+			continue
+		}
+		if qt.prefix == "QD" && !scope.allDirs {
+			if err := m.getDirQuotas(ctx, scope.dirs, dirQuotas); err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to load %q quotas: %w", qt.name, err)
+			}
 			continue
 		}
 		pairs, err := m.scanValues(ctx, m.fmtKey(qt.prefix), -1, nil)
@@ -3662,6 +3668,31 @@ func (m *kvMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota
 	}
 
 	return dirQuotas, userQuotas, groupQuotas, nil
+}
+
+func (m *kvMeta) getDirQuotas(ctx Context, inodes []uint64, quotas map[uint64]*Quota) error {
+	for i := 0; i < len(inodes); i += quotaBatchSize {
+		batch := inodes[i:min(i+quotaBatchSize, len(inodes))]
+		keys := make([][]byte, len(batch))
+		for j, ino := range batch {
+			keys[j] = m.dirQuotaKey(Ino(ino))
+		}
+		var values [][]byte
+		if err := m.client.simpleTxn(ctx, func(tx *kvTxn) error {
+			values = tx.gets(keys...)
+			return nil
+		}, 0); err != nil {
+			return err
+		}
+		for j, v := range values {
+			if len(v) == 32 {
+				quotas[batch[j]] = m.parseQuota(v)
+			} else if len(v) != 0 {
+				logger.Errorf("Invalid quota value for inode %d: %v", batch[j], v)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *kvMeta) cleanUgUsage(ctx Context, qtype uint32) error {
