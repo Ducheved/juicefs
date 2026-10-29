@@ -28,6 +28,7 @@ import (
 	"time"
 
 	aclAPI "github.com/juicedata/juicefs/pkg/acl"
+	"github.com/juicedata/juicefs/pkg/object"
 	"github.com/juicedata/juicefs/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -432,6 +433,9 @@ type Meta interface {
 	CloseSession() error
 	// FlushSession flushes the status to meta service.
 	FlushSession()
+	EvictMetadata(ctx Context, root Ino, store object.ObjectStorage, maxInodes int64) (*CapsuleInfo, error)
+	HydrateMetadata(ctx Context, root Ino, store object.ObjectStorage, force bool) (*CapsuleInfo, error)
+	ListCapsules(ctx Context) ([]*CapsuleInfo, error)
 	// GetSession retrieves information of session with sid
 	GetSession(sid uint64, detail bool) (*Session, error)
 	// ListSessions returns all client sessions.

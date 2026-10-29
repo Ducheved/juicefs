@@ -62,6 +62,7 @@ func Main(args []string) error {
 			cmdQuota(),
 			cmdDestroy(),
 			cmdGC(),
+			cmdMetadata(),
 			cmdFsck(),
 			cmdRestore(),
 			cmdDump(),
