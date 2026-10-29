@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -45,7 +46,7 @@ func capsuleRawDump(t *testing.T, m *redisMeta) map[string]string {
 	ctx := context.Background()
 	dump := make(map[string]string)
 	skip := func(k string) bool {
-		for _, p := range []string{"allSessions", "sessionInfos", "session", "nextCapsuleEpoch", "capsule", "lastCleanup", "nextCleanup", "nextsession"} {
+		for _, p := range []string{"allSessions", "sessionInfos", "session", "nextCapsuleEpoch", "capsule", "lastCleanup", "nextCleanup", "nextsession", "setting"} {
 			if strings.HasPrefix(k, p) {
 				return true
 			}
@@ -344,5 +345,198 @@ func TestRedisCapsuleRejects(t *testing.T) {
 	}
 	if infos, _ := m.ListCapsules(ctx); len(infos) != 1 || infos[0].State != CapsuleHydrating {
 		t.Fatalf("corrupt capsule state: %v", infos)
+	}
+}
+
+func TestRedisCapsuleTransparent(t *testing.T) {
+	m, store, addr := capsuleTestMeta(t)
+	ctx := Background()
+	proj, _ := capsuleTree(t, m)
+	manifest := capsuleManifest(t, m, proj)
+	var want Summary
+	if st := m.GetSummary(ctx, proj, &want, true, true); st != 0 {
+		t.Fatalf("summary: %s", st)
+	}
+	slices := func(mm Meta) (map[string]bool, syscall.Errno) {
+		got := make(map[string]bool)
+		st := mm.ScanSlices(ctx, &ScanSlicesOption{}, func(ino Ino, s Slice) error {
+			got[fmt.Sprintf("%d:%d:%d", ino, s.Id, s.Size)] = true
+			return nil
+		})
+		return got, st
+	}
+	hotSlices, st := slices(m)
+	if st != 0 {
+		t.Fatalf("scan slices: %s", st)
+	}
+	var a, f Ino
+	var attr Attr
+	if st := m.Lookup(ctx, proj, "a", &a, &attr, false); st != 0 {
+		t.Fatalf("lookup: %s", st)
+	}
+	if st := m.Lookup(ctx, a, "f05", &f, &attr, false); st != 0 {
+		t.Fatalf("lookup: %s", st)
+	}
+	evict := func() {
+		if _, err := m.EvictMetadata(ctx, proj, store, 0); err != nil {
+			t.Fatalf("evict: %s", err)
+		}
+	}
+	evict()
+	_ = m.CloseSession()
+
+	newClient := func() *redisMeta {
+		c, err := newRedisMeta("redis", addr, testConfig())
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		format, err := c.Load(true)
+		if err != nil {
+			t.Fatalf("load: %s", err)
+		}
+		if format.MetaVersion != capsuleMetaVersion {
+			t.Fatalf("meta version %d", format.MetaVersion)
+		}
+		c.SetCapsuleStorage(store)
+		if err = c.NewSession(true); err != nil {
+			t.Fatalf("new session: %s", err)
+		}
+		return c.(*redisMeta)
+	}
+	c := newClient()
+	if err := c.DumpMeta(io.Discard, RootInode, 1, false, false, false); !errors.Is(err, syscall.ENOTSUP) {
+		t.Fatalf("dump while cold: %v", err)
+	}
+	var got Summary
+	if st := c.GetSummary(ctx, proj, &got, true, true); st != 0 || got != want {
+		t.Fatalf("cold summary %+v %s, want %+v", got, st, want)
+	}
+	coldSlices, st := slices(c)
+	if st != 0 || len(coldSlices) != len(hotSlices) {
+		t.Fatalf("scan slices while cold: %s %d != %d", st, len(coldSlices), len(hotSlices))
+	}
+	for k := range hotSlices {
+		if !coldSlices[k] {
+			t.Fatalf("slice %s missing while cold", k)
+		}
+	}
+	c.SetCapsuleStorage(nil)
+	if _, st := slices(c); st != syscall.EIO {
+		t.Fatalf("scan slices without storage: %s", st)
+	}
+	if st := c.GetAttr(ctx, f, &attr); st != syscall.EIO {
+		t.Fatalf("getattr without storage: %s", st)
+	}
+	c.SetCapsuleStorage(store)
+	if infos, _ := c.ListCapsules(ctx); len(infos) != 1 {
+		t.Fatalf("capsules: %v", infos)
+	}
+
+	if st := c.GetAttr(ctx, f, &attr); st != 0 || attr.Length != 1<<20 {
+		t.Fatalf("getattr of cold inode: %s %d", st, attr.Length)
+	}
+	if infos, _ := c.ListCapsules(ctx); len(infos) != 0 {
+		t.Fatalf("not hydrated by inode access: %v", infos)
+	}
+	if got := capsuleManifest(t, c, proj); strings.Join(got, "\n") != strings.Join(manifest, "\n") {
+		t.Fatalf("manifest differs after transparent hydration")
+	}
+	_ = c.CloseSession()
+
+	m = newClient()
+	evict()
+	_ = m.CloseSession()
+	c = newClient()
+	var ino Ino
+	if st := c.Lookup(ctx, proj, "a", &ino, &attr, false); st != 0 || ino != a {
+		t.Fatalf("lookup in cold root: %s %d", st, ino)
+	}
+	_ = c.CloseSession()
+
+	m = newClient()
+	evict()
+	_ = m.CloseSession()
+	c = newClient()
+	if st := c.Rmdir(ctx, RootInode, "proj"); st != syscall.ENOTEMPTY {
+		t.Fatalf("rmdir of cold root: %s", st)
+	}
+	if got := capsuleManifest(t, c, proj); strings.Join(got, "\n") != strings.Join(manifest, "\n") {
+		t.Fatalf("manifest differs after rmdir attempt")
+	}
+	_ = c.CloseSession()
+}
+
+func TestRedisCapsuleCrashRecovery(t *testing.T) {
+	m, store, _ := capsuleTestMeta(t)
+	ctx := Background()
+	proj, _ := capsuleTree(t, m)
+	before := capsuleRawDump(t, m)
+	same := func(stage string) {
+		after := capsuleRawDump(t, m)
+		if len(after) != len(before) {
+			t.Fatalf("%s: keys %d, want %d", stage, len(after), len(before))
+		}
+		for k, v := range before {
+			if after[k] != v {
+				t.Fatalf("%s: key %s differs", stage, k)
+			}
+		}
+	}
+	bctx := context.Background()
+	dead := uint64(999999)
+
+	m.rdb.HSet(bctx, m.capsuleKey(proj), "state", CapsuleCooling, "epoch", 1, "owner", dead)
+	if _, err := m.HydrateMetadata(ctx, proj, store, false); err != nil {
+		t.Fatalf("recover cooling: %s", err)
+	}
+	if infos, _ := m.ListCapsules(ctx); len(infos) != 0 {
+		t.Fatalf("cooling descriptor left: %v", infos)
+	}
+	same("crash before commit")
+
+	info, err := m.EvictMetadata(ctx, proj, store, 0)
+	if err != nil {
+		t.Fatalf("evict: %s", err)
+	}
+	data, err := m.readCapsule(bctx, store, info.Object)
+	if err != nil {
+		t.Fatalf("read capsule: %s", err)
+	}
+	recs, err := decodeCapsule(data, proj, info.Epoch, info.Sum)
+	if err != nil {
+		t.Fatalf("decode: %s", err)
+	}
+	for _, r := range recs[:len(recs)/2] {
+		if r.kind == capsuleRecString {
+			m.rdb.Set(bctx, m.prefix+r.key, r.vals[0], 0)
+		}
+	}
+	m.rdb.HSet(bctx, m.capsuleKey(proj), "state", CapsuleHydrating, "epoch", info.Epoch+100, "owner", dead)
+	if _, err = m.HydrateMetadata(ctx, proj, store, false); err != nil {
+		t.Fatalf("take over hydration: %s", err)
+	}
+	same("crash during deletion and hydration")
+
+	info, err = m.EvictMetadata(ctx, proj, store, 0)
+	if err != nil {
+		t.Fatalf("evict: %s", err)
+	}
+	m.rdb.HSet(bctx, m.capsuleKey(proj), "state", CapsuleHydrating, "epoch", info.Epoch+100, "owner", m.sid)
+	stale := func(cur *CapsuleInfo) error {
+		if cur == nil || cur.State != CapsuleHydrating || cur.Epoch != info.Epoch+100 {
+			return syscall.ESTALE
+		}
+		return nil
+	}
+	if _, err = m.HydrateMetadata(ctx, proj, store, false); err != nil {
+		t.Fatalf("hydrate own unfinished: %s", err)
+	}
+	err = m.capsuleTxn(ctx, proj, stale, func(pipe redis.Pipeliner) { pipe.Del(bctx, m.inodeKey(proj)) })
+	if !errors.Is(err, syscall.ESTALE) {
+		t.Fatalf("stale hydrator wrote after takeover: %v", err)
+	}
+	same("stale hydrator")
+	if _, err = m.HydrateMetadata(ctx, proj, store, false); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("repeat hydrate after success: %v", err)
 	}
 }

@@ -107,6 +107,7 @@ func gc(ctx *cli.Context) error {
 		logger.Fatalf("object storage: %s", err)
 	}
 	logger.Infof("Data use %s", blob)
+	m.SetCapsuleStorage(blob)
 	store := chunk.NewCachedStore(blob, chunkConf, nil)
 
 	// Scan all chunks first and do compaction if necessary

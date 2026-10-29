@@ -299,7 +299,12 @@ type baseMeta struct {
 	aclCache     aclAPI.Cache
 
 	sessCtx Context
-	sessWG  sync.WaitGroup
+
+	capsules     atomic.Pointer[capsuleSet]
+	capsuleStore object.ObjectStorage
+	capsuleMu    sync.Mutex
+
+	sessWG sync.WaitGroup
 
 	dSliceMu sync.Mutex
 	dSliceWG sync.WaitGroup
@@ -828,6 +833,7 @@ func (m *baseMeta) NewSession(record bool) error {
 	}
 
 	m.loadQuotas()
+	m.refreshCapsules(Background())
 
 	m.sessWG.Add(3)
 	go m.flushStats(ctx)
@@ -989,6 +995,7 @@ func (m *baseMeta) refresh(ctx Context) {
 			logger.Warnf("Get counter %s: %s", totalInodes, err)
 		}
 		m.loadQuotas()
+		m.refreshCapsules(Background())
 
 		if m.conf.ReadOnly || m.conf.NoBGJob || m.conf.Heartbeat == 0 {
 			continue
@@ -1290,7 +1297,7 @@ func (m *baseMeta) statRootFs(ctx Context, totalspace, availspace, iused, iavail
 
 func (m *baseMeta) resolveCase(ctx Context, parent Ino, name string) *Entry {
 	var entries []*Entry
-	_ = m.en.doReaddir(ctx, parent, 0, &entries, -1)
+	_ = m.readdirHot(ctx, parent, 0, &entries, -1)
 	for _, e := range entries {
 		n := string(e.Name)
 		if strings.EqualFold(name, n) {
@@ -1338,6 +1345,9 @@ func (m *baseMeta) Lookup(ctx Context, parent Ino, name string, inode *Ino, attr
 		}
 		*inode = TrashInode
 		return 0
+	}
+	if st := m.ensureHot(ctx, parent, true); st != 0 {
+		return st
 	}
 	st := m.en.doLookup(ctx, parent, name, inode, attr)
 	if st == syscall.ENOENT && m.conf.CaseInsensi {
@@ -1489,6 +1499,9 @@ func (m *baseMeta) Access(ctx Context, inode Ino, mmask uint8, attr *Attr) sysca
 }
 
 func (m *baseMeta) GetAttr(ctx Context, inode Ino, attr *Attr) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(inode), false); st != 0 {
+		return st
+	}
 	inode = m.checkRoot(inode)
 	if m.conf.OpenCache > 0 && m.of.Check(inode, attr) {
 		return 0
@@ -1532,6 +1545,9 @@ func (m *baseMeta) GetAttr(ctx Context, inode Ino, attr *Attr) syscall.Errno {
 }
 
 func (m *baseMeta) SetAttr(ctx Context, inode Ino, set uint16, sugidclearmode uint8, attr *Attr) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(inode), false); st != 0 {
+		return st
+	}
 	defer m.timeit("SetAttr", time.Now())
 	inode = m.checkRoot(inode)
 	var oldAttr Attr
@@ -1648,6 +1664,9 @@ func (m *baseMeta) inheritMode(ctx Context, _type uint8, parentGid uint32, paren
 }
 
 func (m *baseMeta) Mknod(ctx Context, parent Ino, name string, _type uint8, mode, cumask uint16, rdev uint32, path string, inode *Ino, attr *Attr) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(parent), true); st != 0 {
+		return st
+	}
 	if _type < TypeFile || _type > TypeSocket {
 		return syscall.EINVAL
 	}
@@ -1750,6 +1769,12 @@ func (m *baseMeta) Symlink(ctx Context, parent Ino, name string, path string, in
 }
 
 func (m *baseMeta) Link(ctx Context, inode, parent Ino, name string, attr *Attr) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
+	if st := m.ensureHot(ctx, m.checkRoot(parent), true); st != 0 {
+		return st
+	}
 	if parent.IsTrash() {
 		return syscall.EPERM
 	}
@@ -1798,6 +1823,9 @@ func (m *baseMeta) Link(ctx Context, inode, parent Ino, name string, attr *Attr)
 }
 
 func (m *baseMeta) ReadLink(ctx Context, inode Ino, path *[]byte) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	noatime := m.conf.AtimeMode == NoAtime || m.conf.ReadOnly
 	if target, ok := m.symlinks.Load(inode); ok {
 		if noatime {
@@ -1842,6 +1870,9 @@ func (m *baseMeta) ReadLink(ctx Context, inode Ino, path *[]byte) syscall.Errno 
 }
 
 func (m *baseMeta) Unlink(ctx Context, parent Ino, name string, skipCheckTrash ...bool) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(parent), true); st != 0 {
+		return st
+	}
 	if parent == RootInode && name == TrashName || parent.IsTrash() && ctx.Uid() != 0 {
 		return syscall.EPERM
 	}
@@ -1867,6 +1898,9 @@ func (m *baseMeta) Unlink(ctx Context, parent Ino, name string, skipCheckTrash .
 }
 
 func (m *baseMeta) Rmdir(ctx Context, parent Ino, name string, skipCheckTrash ...bool) syscall.Errno {
+	if st := m.ensureHotChild(ctx, m.checkRoot(parent), name); st != 0 {
+		return st
+	}
 	if name == "." {
 		return syscall.EINVAL
 	}
@@ -1939,6 +1973,12 @@ func (m *baseMeta) BatchClone(ctx Context, srcParent Ino, dstParent Ino, entries
 }
 
 func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst Ino, nameDst string, flags uint32, inode *Ino, attr *Attr) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(parentSrc), true); st != 0 {
+		return st
+	}
+	if st := m.ensureHotChild(ctx, m.checkRoot(parentDst), nameDst); st != 0 {
+		return st
+	}
 	if parentSrc == RootInode && nameSrc == TrashName || parentDst == RootInode && nameDst == TrashName {
 		return syscall.EPERM
 	}
@@ -2092,6 +2132,9 @@ func (m *baseMeta) touchAtime(ctx Context, inode Ino, attr *Attr) {
 }
 
 func (m *baseMeta) Open(ctx Context, inode Ino, flags uint32, attr *Attr) (st syscall.Errno) {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	if m.conf.ReadOnly && flags&(syscall.O_WRONLY|syscall.O_RDWR|syscall.O_TRUNC|syscall.O_APPEND) != 0 {
 		return syscall.EROFS
 	}
@@ -2149,6 +2192,9 @@ func (m *baseMeta) InvalidateChunkCache(ctx Context, inode Ino, indx uint32) sys
 }
 
 func (m *baseMeta) Read(ctx Context, inode Ino, indx uint32, slices *[]Slice) (st syscall.Errno) {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	defer func() {
 		if st == 0 {
 			m.touchAtime(ctx, inode, nil)
@@ -2229,6 +2275,9 @@ func (m *baseMeta) Close(ctx Context, inode Ino) syscall.Errno {
 }
 
 func (m *baseMeta) Write(ctx Context, inode Ino, indx uint32, off uint32, slice Slice, mtime time.Time) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	defer m.timeit("Write", time.Now())
 	f := m.of.find(inode)
 	if f != nil {
@@ -2255,6 +2304,9 @@ func (m *baseMeta) Write(ctx Context, inode Ino, indx uint32, off uint32, slice 
 }
 
 func (m *baseMeta) Truncate(ctx Context, inode Ino, flags uint8, length uint64, attr *Attr, skipPermCheck bool) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	defer m.timeit("Truncate", time.Now())
 	f := m.of.find(inode)
 	if f != nil {
@@ -2275,6 +2327,9 @@ func (m *baseMeta) Truncate(ctx Context, inode Ino, flags uint8, length uint64, 
 }
 
 func (m *baseMeta) Fallocate(ctx Context, inode Ino, mode uint8, off uint64, size uint64, flength *uint64) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	if mode&fallocCollapesRange != 0 && mode != fallocCollapesRange {
 		return syscall.EINVAL
 	}
@@ -2311,6 +2366,9 @@ func (m *baseMeta) Fallocate(ctx Context, inode Ino, mode uint8, off uint64, siz
 }
 
 func (m *baseMeta) Readdir(ctx Context, inode Ino, plus uint8, entries *[]*Entry) (rerr syscall.Errno) {
+	if st := m.ensureHot(ctx, m.checkRoot(inode), true); st != 0 {
+		return st
+	}
 	var attr Attr
 	defer func() {
 		if rerr == 0 {
@@ -2352,6 +2410,9 @@ func (m *baseMeta) Readdir(ctx Context, inode Ino, plus uint8, entries *[]*Entry
 }
 
 func (m *baseMeta) SetXattr(ctx Context, inode Ino, name string, value []byte, flags uint32) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	if m.conf.ReadOnly {
 		return syscall.EROFS
 	}
@@ -2369,6 +2430,9 @@ func (m *baseMeta) SetXattr(ctx Context, inode Ino, name string, value []byte, f
 }
 
 func (m *baseMeta) RemoveXattr(ctx Context, inode Ino, name string) syscall.Errno {
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	if m.conf.ReadOnly {
 		return syscall.EROFS
 	}
@@ -2417,7 +2481,7 @@ func (m *baseMeta) GetPaths(ctx Context, inode Ino) []string {
 				return "", fmt.Errorf("inode %d is not a directory", ino)
 			}
 			var entries []*Entry
-			if st := m.en.doReaddir(ctx, attr.Parent, 0, &entries, -1); st != 0 {
+			if st := m.readdirHot(ctx, attr.Parent, 0, &entries, -1); st != 0 {
 				return "", fmt.Errorf("readdir inode %d: %s", ino, st)
 			}
 			var name string
@@ -2462,7 +2526,7 @@ func (m *baseMeta) GetPaths(ctx Context, inode Ino) []string {
 			continue
 		}
 		var entries []*Entry
-		if st := m.en.doReaddir(ctx, parent, 0, &entries, -1); st != 0 {
+		if st := m.readdirHot(ctx, parent, 0, &entries, -1); st != 0 {
 			logger.Warnf("Readdir inode %d: %s", parent, st)
 			continue
 		}
@@ -2482,7 +2546,7 @@ func (m *baseMeta) GetPaths(ctx Context, inode Ino) []string {
 
 func (m *baseMeta) countDirNlink(ctx Context, inode Ino) (uint32, syscall.Errno) {
 	var entries []*Entry
-	if st := m.en.doReaddir(ctx, inode, 0, &entries, -1); st != 0 {
+	if st := m.readdirHot(ctx, inode, 0, &entries, -1); st != 0 {
 		return 0, st
 	}
 	var dirCounter uint32 = 2
@@ -2502,7 +2566,7 @@ func (m *baseMeta) walk(ctx Context, inode Ino, p string, attr *Attr, walkFn met
 		return 0
 	}
 	var entries []*Entry
-	st := m.en.doReaddir(ctx, inode, 1, &entries, -1)
+	st := m.readdirHot(ctx, inode, 1, &entries, -1)
 	if st != 0 && st != syscall.ENOENT {
 		logger.Errorf("list %s: %s", p, st)
 		return st
@@ -2522,6 +2586,9 @@ func (m *baseMeta) walk(ctx Context, inode Ino, p string, attr *Attr, walkFn met
 }
 
 func (m *baseMeta) Check(ctx Context, fpath string, opt *CheckOpt) error {
+	if err := m.checkNoCapsules(ctx); err != nil {
+		return err
+	}
 	var attr Attr
 	var inode = RootInode
 	var parent = RootInode
@@ -2814,7 +2881,10 @@ func (m *baseMeta) resolve(ctx Context, dpath string, inode *Ino, create bool) s
 	for dpath != "" {
 		ps := strings.SplitN(dpath, "/", 2)
 		if ps[0] != "" {
-			r := m.en.doLookup(ctx, *inode, ps[0], inode, &attr)
+			r := m.ensureHot(ctx, *inode, true)
+			if r == 0 {
+				r = m.en.doLookup(ctx, *inode, ps[0], inode, &attr)
+			}
 			if errors.Is(r, syscall.ENOENT) && create {
 				r = m.Mkdir(ctx, *inode, ps[0], 0777, uint16(umask), 0, inode, &attr)
 			}
@@ -3423,6 +3493,9 @@ func (m *baseMeta) ScanDeletedObject(ctx Context, tss trashSliceScan, pss pendin
 }
 
 func (m *baseMeta) Clone(ctx Context, srcParentIno, srcIno, parent Ino, name string, cmode uint8, cumask uint16, concurrency uint8, count, total *uint64) syscall.Errno {
+	if m.hasCapsules() {
+		return syscall.ENOTSUP
+	}
 
 	if srcIno.IsTrash() || srcParentIno.IsTrash() || parent.IsTrash() || (parent == RootInode && name == TrashName) {
 		return syscall.EPERM
@@ -3898,6 +3971,9 @@ type DirHandler interface {
 }
 
 func (m *baseMeta) NewDirHandler(ctx Context, inode Ino, plus bool, initEntries []*Entry) (DirHandler, syscall.Errno) {
+	if st := m.ensureHot(ctx, m.checkRoot(inode), true); st != 0 {
+		return nil, st
+	}
 	var attr Attr
 	var st syscall.Errno
 	defer func() {
@@ -4074,6 +4150,9 @@ func (h *dirHandler) Close() {
 }
 
 func (m *baseMeta) DumpMetaV2(ctx Context, w io.Writer, opt *DumpOption) error {
+	if err := m.checkNoCapsules(ctx); err != nil {
+		return err
+	}
 	opt = opt.check()
 
 	bak := newBakFormat()

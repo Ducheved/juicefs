@@ -35,7 +35,8 @@ import (
 
 const (
 	// MaxVersion is the max of supported versions.
-	MaxVersion = 1
+	MaxVersion     = 2
+	DefaultVersion = 1
 	// ChunkBits is the size of a chunk.
 	ChunkBits = 26
 	// ChunkSize is size of a chunk
@@ -436,6 +437,7 @@ type Meta interface {
 	EvictMetadata(ctx Context, root Ino, store object.ObjectStorage, maxInodes int64) (*CapsuleInfo, error)
 	HydrateMetadata(ctx Context, root Ino, store object.ObjectStorage, force bool) (*CapsuleInfo, error)
 	ListCapsules(ctx Context) ([]*CapsuleInfo, error)
+	SetCapsuleStorage(store object.ObjectStorage)
 	// GetSession retrieves information of session with sid
 	GetSession(sid uint64, detail bool) (*Session, error)
 	// ListSessions returns all client sessions.

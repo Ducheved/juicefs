@@ -140,7 +140,7 @@ func (m *baseMeta) groupBatch(batch map[Ino]dirStat, size int) [][]Ino {
 
 func (m *baseMeta) calcDirStat(ctx Context, ino Ino) (*dirStat, syscall.Errno) {
 	var entries []*Entry
-	if eno := m.en.doReaddir(ctx, ino, 1, &entries, -1); eno != 0 {
+	if eno := m.readdirHot(ctx, ino, 1, &entries, -1); eno != 0 {
 		return nil, eno
 	}
 
@@ -786,7 +786,7 @@ func (m *baseMeta) scanGlobalUserGroupUsage(ctx Context) (map[uint64]*Summary, m
 
 		var entries []*Entry
 		visitedDirs[currentDir] = true
-		err := m.en.doReaddir(ctx, currentDir, 1, &entries, -1)
+		err := m.readdirHot(ctx, currentDir, 1, &entries, -1)
 		if err != 0 {
 			logger.Warnf("readdir %d: %s", currentDir, err)
 			continue

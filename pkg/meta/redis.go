@@ -1056,7 +1056,7 @@ func (m *redisMeta) Resolve(ctx Context, parent Ino, path string, inode *Ino, at
 	if force {
 		return m.baseMeta.Resolve(ctx, parent, path, inode, attr, force)
 	}
-	if len(m.shaResolve) == 0 || m.conf.CaseInsensi || m.prefix != "" {
+	if len(m.shaResolve) == 0 || m.conf.CaseInsensi || m.prefix != "" || m.hasCapsules() {
 		return syscall.ENOTSUP
 	}
 	defer m.timeit("Resolve", time.Now())
@@ -3210,6 +3210,12 @@ func (m *redisMeta) doWrite(ctx Context, inode Ino, indx uint32, off uint32, sli
 }
 
 func (m *redisMeta) CopyFileRange(ctx Context, fin Ino, offIn uint64, fout Ino, offOut uint64, size uint64, flags uint32, copied, outLength *uint64) syscall.Errno {
+	if st := m.ensureHot(ctx, fin, false); st != 0 {
+		return st
+	}
+	if st := m.ensureHot(ctx, fout, false); st != 0 {
+		return st
+	}
 	defer m.timeit("CopyFileRange", time.Now())
 	f := m.of.find(fout)
 	if f != nil {
@@ -4090,6 +4096,10 @@ func (m *redisMeta) ScanSlices(ctx Context, opt *ScanSlicesOption, fn func(Ino, 
 		logger.Warnf("scan chunks: %s", err)
 		return errno(err)
 	}
+	if err = m.scanCapsuleSlices(ctx, fn); err != nil {
+		logger.Errorf("scan evicted metadata: %s", err)
+		return syscall.EIO
+	}
 
 	if opt.ScanPending {
 		if err := m.hscan(ctx, m.sliceRefs(), func(keys []string) error {
@@ -4329,6 +4339,9 @@ func (m *redisMeta) doRepair(ctx Context, inode Ino, attr *Attr, trustNlink bool
 func (m *redisMeta) GetXattr(ctx Context, inode Ino, name string, vbuff *[]byte) syscall.Errno {
 	defer m.timeit("GetXattr", time.Now())
 	inode = m.checkRoot(inode)
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	var err error
 	*vbuff, err = m.rdb.HGet(ctx, m.xattrKey(inode), name).Bytes()
 	if err == redis.Nil {
@@ -4340,6 +4353,9 @@ func (m *redisMeta) GetXattr(ctx Context, inode Ino, name string, vbuff *[]byte)
 func (m *redisMeta) ListXattr(ctx Context, inode Ino, names *[]byte) syscall.Errno {
 	defer m.timeit("ListXattr", time.Now())
 	inode = m.checkRoot(inode)
+	if st := m.ensureHot(ctx, inode, false); st != 0 {
+		return st
+	}
 	vals, err := m.rdb.HKeys(ctx, m.xattrKey(inode)).Result()
 	if err != nil {
 		return errno(err)
@@ -4990,6 +5006,9 @@ func (m *redisMeta) dumpDir(inode Ino, tree *DumpedEntry, bw *bufio.Writer, dept
 }
 
 func (m *redisMeta) DumpMeta(w io.Writer, root Ino, threads int, keepSecret, fast, skipTrash bool) (err error) {
+	if err = m.checkNoCapsules(Background()); err != nil {
+		return err
+	}
 	defer func() {
 		if p := recover(); p != nil {
 			debug.PrintStack()

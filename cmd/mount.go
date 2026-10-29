@@ -619,6 +619,7 @@ func mount(c *cli.Context) error {
 			return fmt.Errorf("object storage: %s", err)
 		}
 		logger.Infof("Data use %s", blob)
+		metaCli.SetCapsuleStorage(blob)
 
 	}
 

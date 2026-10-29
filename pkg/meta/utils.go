@@ -300,7 +300,7 @@ func updateLocks(ls []plockRecord, nl plockRecord) []plockRecord {
 func (m *baseMeta) emptyDir(ctx Context, inode Ino, skipCheckTrash bool, count *uint64, concurrent chan int) syscall.Errno {
 	for {
 		var entries []*Entry
-		if st := m.en.doReaddir(ctx, inode, 0, &entries, 10000); st != 0 && st != syscall.ENOENT {
+		if st := m.readdirHot(ctx, inode, 0, &entries, 10000); st != 0 && st != syscall.ENOENT {
 			return st
 		}
 		if len(entries) == 0 {
@@ -423,8 +423,18 @@ func (m *baseMeta) getDirSummary(ctx Context, inode Ino, summary *Summary, recur
 	var entries []*Entry
 	var err syscall.Errno
 	format := m.getFormat()
+	if cold, ok := m.coldSummary(inode); ok && recursive {
+		atomic.AddUint64(&summary.Dirs, cold.Dirs)
+		atomic.AddUint64(&summary.Files, cold.Files)
+		atomic.AddUint64(&summary.Size, cold.Size)
+		atomic.AddUint64(&summary.Length, cold.Length)
+		if updateProgress != nil {
+			updateProgress(cold.Dirs+cold.Files, cold.Size)
+		}
+		return 0
+	}
 	if strict || !format.DirStats {
-		err = m.en.doReaddir(ctx, inode, 1, &entries, -1)
+		err = m.readdirHot(ctx, inode, 1, &entries, -1)
 	} else {
 		var st *dirStat
 		st, err = m.GetDirStat(ctx, inode)
@@ -440,7 +450,7 @@ func (m *baseMeta) getDirSummary(ctx Context, inode Ino, summary *Summary, recur
 		err = m.en.doGetAttr(ctx, inode, &attr)
 		if err == 0 {
 			if attr.Nlink > 2 {
-				err = m.en.doReaddir(ctx, inode, 0, &entries, -1)
+				err = m.readdirHot(ctx, inode, 0, &entries, -1)
 			} else {
 				atomic.AddUint64(&summary.Files, uint64(st.inodes))
 			}
@@ -545,7 +555,7 @@ func (m *baseMeta) getTreeSummary(ctx Context, tree *TreeSummary, depth, topN ui
 	}
 
 	var entries []*Entry
-	if err := m.en.doReaddir(ctx, tree.Inode, 1, &entries, -1); err != 0 {
+	if err := m.readdirHot(ctx, tree.Inode, 1, &entries, -1); err != 0 {
 		return err
 	}
 	tree.Children = make([]*TreeSummary, len(entries))

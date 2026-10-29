@@ -3,6 +3,7 @@ package meta
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -15,6 +16,8 @@ import (
 )
 
 const capsuleBatch = 500
+
+var _ capsuleEngine = (*redisMeta)(nil)
 
 func (m *redisMeta) capsuleKey(root Ino) string {
 	return m.prefix + "capsule" + root.String()
@@ -36,6 +39,7 @@ func parseCapsuleInfo(root Ino, vals map[string]string) *CapsuleInfo {
 		v, _ := strconv.ParseUint(vals[k], 10, 64)
 		return v
 	}
+	runs := decodeRuns([]byte(vals["runs"]))
 	return &CapsuleInfo{
 		Root:    root,
 		State:   vals["state"],
@@ -47,6 +51,9 @@ func parseCapsuleInfo(root Ino, vals map[string]string) *CapsuleInfo {
 		Records: int64(u("records")),
 		Inodes:  int64(u("inodes")),
 		Keys:    int64(u("keys")),
+		Runs:    int64(len(runs)),
+		Summary: Summary{Length: u("length"), Size: u("space"), Files: u("files"), Dirs: u("dirs")},
+		runs:    runs,
 	}
 }
 
@@ -86,19 +93,34 @@ func (m *redisMeta) relKey(key string) string {
 }
 
 type capsuleSnapshot struct {
-	recs   []capsuleRecord
-	keys   []string
-	fields map[string][]string
-	inodes int64
+	recs    []capsuleRecord
+	keys    []string
+	fields  map[string][]string
+	inodes  int64
+	runs    []inoRun
+	summary Summary
 }
 
 func (m *redisMeta) snapshotUnit(ctx Context, root Ino, maxInodes int64) (*capsuleSnapshot, error) {
 	snap := &capsuleSnapshot{fields: make(map[string][]string)}
 	inUnit := map[Ino]bool{root: true}
+	links := make(map[Ino]uint64)
 	dirs := []Ino{root}
 	var others []Ino
+	cold, err := m.rdb.HKeys(ctx, m.capsulesKey()).Result()
+	if err != nil {
+		return nil, err
+	}
+	coldRoots := make(map[Ino]bool, len(cold))
+	for _, c := range cold {
+		v, _ := strconv.ParseUint(c, 10, 64)
+		coldRoots[Ino(v)] = true
+	}
 	for i := 0; i < len(dirs); i++ {
 		dir := dirs[i]
+		if i > 0 && coldRoots[dir] {
+			return nil, fmt.Errorf("directory %d inside the unit is already evicted: %w", dir, syscall.EBUSY)
+		}
 		key := m.entryKey(dir)
 		vals, err := m.rdb.HGetAll(ctx, key).Result()
 		if err != nil {
@@ -117,6 +139,7 @@ func (m *redisMeta) snapshotUnit(ctx Context, root Ino, maxInodes int64) (*capsu
 			v := vals[name]
 			rec.vals = append(rec.vals, []byte(name), []byte(v))
 			typ, ino := m.parseEntry([]byte(v))
+			links[ino]++
 			if inUnit[ino] {
 				continue
 			}
@@ -133,6 +156,7 @@ func (m *redisMeta) snapshotUnit(ctx Context, root Ino, maxInodes int64) (*capsu
 		}
 	}
 	snap.inodes = int64(len(inUnit))
+	snap.runs = inoRuns(append(others, root))
 	isDir := make(map[Ino]bool, len(dirs))
 	for _, d := range dirs {
 		isDir[d] = true
@@ -179,6 +203,17 @@ func (m *redisMeta) snapshotUnit(ctx Context, root Ino, maxInodes int64) (*capsu
 			}
 			var attr Attr
 			m.parseAttr(buf, &attr)
+			n := links[ino]
+			if attr.Typ == TypeDirectory {
+				snap.summary.Dirs += n
+				snap.summary.Size += n * uint64(align4K(0))
+			} else {
+				snap.summary.Files += n
+				snap.summary.Size += n * uint64(align4K(attr.Length))
+				if attr.Typ == TypeFile {
+					snap.summary.Length += n * attr.Length
+				}
+			}
 			if attr.Parent == 0 {
 				second = append(second, func(pipe redis.Pipeliner) { pipe.HGetAll(ctx, m.parentKey(ino)) })
 				collect = append(collect, func(cs []redis.Cmder, k int) (int, error) {
@@ -284,6 +319,9 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 	if attr.Typ != TypeDirectory {
 		return nil, syscall.ENOTDIR
 	}
+	if err := m.enableCapsules(ctx); err != nil {
+		return nil, err
+	}
 	e, err := m.incrCounter("nextCapsuleEpoch", 1)
 	if err != nil {
 		return nil, err
@@ -322,7 +360,7 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		return abort(err)
 	}
 	info := &CapsuleInfo{Root: root, State: CapsuleCold, Epoch: epoch, Owner: m.sid, Object: obj, Sum: sum, Size: int64(len(data)),
-		Records: int64(len(snap.recs)), Inodes: snap.inodes, Keys: int64(len(snap.keys))}
+		Records: int64(len(snap.recs)), Inodes: snap.inodes, Keys: int64(len(snap.keys)), Runs: int64(len(snap.runs)), Summary: snap.summary, runs: snap.runs}
 	err = m.capsuleTxn(ctx, root, func(cur *CapsuleInfo) error {
 		if cur == nil || cur.State != CapsuleCooling || cur.Epoch != epoch {
 			return fmt.Errorf("capsule of inode %d changed during eviction: %w", root, syscall.ESTALE)
@@ -330,7 +368,8 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		return nil
 	}, func(pipe redis.Pipeliner) {
 		pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCold, "object", obj, "sum", sum, "size", info.Size,
-			"records", info.Records, "inodes", info.Inodes, "keys", info.Keys)
+			"records", info.Records, "inodes", info.Inodes, "keys", info.Keys, "runs", encodeRuns(snap.runs),
+			"files", snap.summary.Files, "dirs", snap.summary.Dirs, "space", snap.summary.Size, "length", snap.summary.Length)
 		pipe.HSet(ctx, m.capsulesKey(), root.String(), epoch)
 		pipe.Incr(ctx, m.capsuleVerKey())
 	})
@@ -542,4 +581,110 @@ func (m *redisMeta) doListCapsules(ctx Context) ([]*CapsuleInfo, error) {
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Root < infos[j].Root })
 	return infos, nil
+}
+
+func (m *redisMeta) enableCapsules(ctx Context) error {
+	return m.txn(ctx, func(tx *redis.Tx) error {
+		body, err := tx.Get(ctx, m.setting()).Bytes()
+		if err != nil {
+			return err
+		}
+		var f map[string]interface{}
+		if err = json.Unmarshal(body, &f); err != nil {
+			return err
+		}
+		if v, _ := f["MetaVersion"].(float64); int(v) >= capsuleMetaVersion {
+			return nil
+		}
+		f["MetaVersion"] = capsuleMetaVersion
+		if body, err = json.MarshalIndent(f, "", "\t"); err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, m.setting(), body, 0)
+			return nil
+		})
+		return err
+	}, m.setting())
+}
+
+func (m *redisMeta) doLoadCapsuleSet(ctx Context, ver int64) (*capsuleSet, error) {
+	var verCmd *redis.StringCmd
+	var rootsCmd *redis.StringSliceCmd
+	_, err := m.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		verCmd = pipe.Get(ctx, m.capsuleVerKey())
+		rootsCmd = pipe.HKeys(ctx, m.capsulesKey())
+		return nil
+	})
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	cur, err := verCmd.Int64()
+	if err == redis.Nil {
+		cur = 0
+	} else if err != nil {
+		return nil, err
+	}
+	if cur == ver {
+		return nil, nil
+	}
+	roots := rootsCmd.Val()
+	infos := make([]*CapsuleInfo, 0, len(roots))
+	for i := 0; i < len(roots); i += capsuleBatch {
+		batch := roots[i:min(i+capsuleBatch, len(roots))]
+		cmds, err := m.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for _, r := range batch {
+				v, _ := strconv.ParseUint(r, 10, 64)
+				pipe.HGetAll(ctx, m.capsuleKey(Ino(v)))
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		for j, c := range cmds {
+			v, _ := strconv.ParseUint(batch[j], 10, 64)
+			if info := parseCapsuleInfo(Ino(v), c.(*redis.MapStringStringCmd).Val()); info != nil {
+				infos = append(infos, info)
+			}
+		}
+	}
+	return newCapsuleSet(cur, infos), nil
+}
+
+func (m *redisMeta) doScanCapsuleSlices(ctx Context, store object.ObjectStorage, info *CapsuleInfo, fn func(Ino, Slice) error) error {
+	data, err := m.readCapsule(ctx, store, info.Object)
+	if err != nil {
+		return err
+	}
+	var objEpoch uint64
+	if _, err = fmt.Sscanf(info.Object[strings.LastIndex(info.Object, "/")+1:], "%d", &objEpoch); err != nil {
+		return fmt.Errorf("bad capsule object name %q", info.Object)
+	}
+	recs, err := decodeCapsule(data, info.Root, objEpoch, info.Sum)
+	if err != nil {
+		return err
+	}
+	for _, r := range recs {
+		if r.kind != capsuleRecList || !strings.HasPrefix(r.key, "c") {
+			continue
+		}
+		inode, _ := strconv.ParseUint(strings.Split(r.key[1:], "_")[0], 10, 64)
+		vals := make([]string, len(r.vals))
+		for i, v := range r.vals {
+			vals[i] = string(v)
+		}
+		ss := readSlices(vals)
+		if ss == nil {
+			return fmt.Errorf("corrupt chunk %s in capsule", r.key)
+		}
+		for _, s := range ss {
+			if s.id > 0 {
+				if err = fn(Ino(inode), Slice{Id: s.id, Size: s.size}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
