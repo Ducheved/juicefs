@@ -29,6 +29,7 @@ Cost is per-key overhead, so packing in RAM is a constant factor, not a fix (INF
 | Foreign hardlink is accounted correctly (parents read inside the txn) | RUN | `TestRndForeignHardlink` |
 | Cross-quota rename moves usage from non-strict dir stats; another client's unflushed stats are missed | RUN | first run of `TestRndForeignRenameDir` (/a=1 /b=1 instead of 0/2) |
 | Upstream race: `refresh` reads `m.sid` before `NewSession` sets it | RUN (`-race`, heartbeat 100 ms) | `base.go:805/824/976` |
+| Scoped refresh sees quotas created, changed and deleted by raw HSET/HDEL within one refresh | RUN | `TestRedisDirQuotaExternalWriter` |
 
 Background quota cost, one client, heartbeat 1 s, 10 active quotas (RUN, `rnd/results/qbench`):
 
@@ -51,7 +52,8 @@ Background quota cost, one client, heartbeat 1 s, 10 active quotas (RUN, `rnd/re
 | Evict / hydrate time per 10 000-file unit | RUN | ~120 ms / ~87 ms |
 | Hydrate peak memory | RUN | equal to the unit's own hot size, no extra burst |
 | Residual per cold unit in Valkey | RUN | ~1.7 KB, 2 keys (descriptor + root records that stay hot) |
-| Cold namespace ×10 at fixed hot set | RUN | `rnd/results/growth` |
+| Cold namespace 0.9 M → 9.9 M files (×11), hot 100 000 files fixed | RUN | `used_memory` 29.6 → 30.6 MB (~1 KB per cold unit), keys 202 → 204 thousand; hot stat p50 95 µs, create p50 ~590 µs unchanged; capsules 1.6 GB (`rnd/results/growth`) |
+| 200 000-file unit | RUN | evict 2.5 s, hydrate 2.1 s, peak = hot size (47 MB), capsule 32 MB |
 | Transparent hydration on lookup / readdir / inode access; summary of a cold root without hydration; rmdir of a cold root → ENOTEMPTY | RUN | `TestRedisCapsuleTransparent` |
 | GC sees capsule slices; without object storage GC fails closed (EIO) | RUN | same test |
 | Crash before commit, during deletion, during hydration, stale hydrator after takeover | RUN | `TestRedisCapsuleCrashRecovery` |
@@ -66,4 +68,4 @@ Background quota cost, one client, heartbeat 1 s, 10 active quotas (RUN, `rnd/re
 | `DBSIZE` reports 0 while keys exist (async scan) | RUN | confirmed; LoadMeta empty-target guard unreliable |
 | #3555 partial write of a failed command inside EXEC | RUN | reproduced on 2.17.0 with `write_batch_max_bytes 180` |
 | Full JuiceFS `testMeta` on Kvrocks (`redis-databases 16`, `write_options.sync yes`) | RUN | pass, 33 s |
-| Memory/latency at fixed hot set with cold growth | UNKNOWN | next |
+| Fixed hot probe while namespace grows 1 → 4 M files, block cache 512 MB, `sync yes` | RUN | RSS 193 / 447 / 766 / 794 MB (plateau at cache size + ~250 MB), disk 0.8 / 1.9 / 2.8 / 3.7 GB, stat p50 154–175 µs (Valkey 95), create p50 506–612 µs (Valkey ~550), bulk create 3.4× slower than Valkey (`rnd/results/kvrocks`) |
