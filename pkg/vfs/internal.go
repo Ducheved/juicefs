@@ -320,6 +320,8 @@ func (v *VFS) handleInternalMsg(ctx meta.Context, cmd uint32, r *utils.Buffer, o
 			st = v.Meta.Remove(ctx, inode, name, skipTrash, numThreads, &count)
 			if st != 0 {
 				logger.Errorf("remove %d/%s: %s", inode, name, st)
+			} else if err := v.Meta.FlushSession(); err != nil {
+				st = syscall.EIO
 			}
 			close(done)
 		}()

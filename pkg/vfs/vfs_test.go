@@ -17,6 +17,7 @@
 package vfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -871,6 +872,56 @@ func TestInternalFile(t *testing.T) {
 		t.Fatalf("read result: %s %d", e, n)
 	} else if resp[0] != uint8(syscall.EIO) {
 		t.Fatalf("result: %s", string(resp[:n]))
+	}
+}
+
+func TestRmrFlushQuota(t *testing.T) {
+	v, _ := createTestVFS(nil, "")
+	ctx := NewLogContext(meta.NewContext(10, 1, []uint32{2, 3}))
+	acc, st := v.Mkdir(ctx, 1, "acc", 0755, 0)
+	if st != 0 {
+		t.Fatalf("mkdir acc: %s", st)
+	}
+	if err := v.Meta.HandleQuota(ctx, meta.QuotaSet, "/acc", meta.DirQuotaType, map[string]*meta.Quota{"/acc": {MaxSpace: 1 << 30, MaxInodes: 100}}, false, false, false); err != nil {
+		t.Fatalf("set quota: %s", err)
+	}
+	if err := v.Meta.NewSession(false); err != nil {
+		t.Fatalf("new session: %s", err)
+	}
+	defer v.Meta.CloseSession()
+	sub, st := v.Mkdir(ctx, acc.Inode, "sub", 0755, 0)
+	if st != 0 {
+		t.Fatalf("mkdir sub: %s", st)
+	}
+	for i := 0; i < 3; i++ {
+		fe, fh, st := v.Create(ctx, sub.Inode, fmt.Sprintf("f%d", i), 0644, 0, syscall.O_RDWR)
+		if st != 0 {
+			t.Fatalf("create f%d: %s", i, st)
+		}
+		v.Release(ctx, fe.Inode, fh)
+	}
+	if err := v.Meta.FlushSession(); err != nil {
+		t.Fatalf("flush session: %s", err)
+	}
+
+	buf := utils.NewBuffer(8 + 1 + 3 + 2)
+	buf.Put64(uint64(acc.Inode))
+	buf.Put8(3)
+	buf.Put([]byte("sub"))
+	buf.Put8(0)
+	buf.Put8(meta.RmrDefaultThreads)
+	out := &bytes.Buffer{}
+	v.handleInternalMsg(ctx, meta.Rmr, utils.FromBuffer(buf.Bytes()), out)
+	if _, st := decodeControlOutput(out.Bytes()); st != 0 {
+		t.Fatalf("rmr: %s", st)
+	}
+
+	qs := make(map[string]*meta.Quota)
+	if err := v.Meta.HandleQuota(ctx, meta.QuotaGet, "/acc", meta.DirQuotaType, qs, false, false, false); err != nil {
+		t.Fatalf("get quota: %s", err)
+	}
+	if q := qs["/acc"]; q == nil || q.UsedSpace != 0 || q.UsedInodes != 0 {
+		t.Fatalf("quota of /acc after rmr: %+v", q)
 	}
 }
 

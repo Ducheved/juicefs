@@ -1038,14 +1038,18 @@ func (m *baseMeta) CloseSession() error {
 	return err
 }
 
-func (m *baseMeta) FlushSession() {
+func (m *baseMeta) FlushSession() error {
 	if m.conf.ReadOnly {
-		return
+		return nil
 	}
 	m.doFlushStats()
-	m.doFlushDirStat()
-	m.doFlushQuotas()
+	errDir := m.doFlushDirStat()
+	errQuota := m.doFlushQuotas()
 	logger.Infof("flush session %d:", m.sid)
+	if errDir != nil {
+		return errDir
+	}
+	return errQuota
 }
 
 func (m *baseMeta) Init(format *Format, force bool) error {

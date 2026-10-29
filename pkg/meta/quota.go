@@ -235,14 +235,14 @@ func (m *baseMeta) flushDirStat(ctx Context) {
 	}
 }
 
-func (m *baseMeta) doFlushDirStat() {
+func (m *baseMeta) doFlushDirStat() error {
 	if !m.getFormat().DirStats {
-		return
+		return nil
 	}
 	m.dirStatsLock.Lock()
 	if len(m.dirStats) == 0 {
 		m.dirStatsLock.Unlock()
-		return
+		return nil
 	}
 	stats := m.dirStats
 	m.dirStats = make(map[Ino]dirStat)
@@ -251,6 +251,7 @@ func (m *baseMeta) doFlushDirStat() {
 	if err != nil {
 		logger.Errorf("update dir stat failed: %v", err)
 	}
+	return err
 }
 
 func (m *baseMeta) flushStats(ctx Context) {
@@ -543,9 +544,9 @@ func (m *baseMeta) updateQuota(q *Quota, newSpace, newInodes int64) {
 	atomic.AddInt64(&q.UsedInodes, newInodes)
 }
 
-func (m *baseMeta) doFlushQuotas() {
+func (m *baseMeta) doFlushQuotas() error {
 	if !m.getFormat().DirStats && !m.getFormat().UserGroupQuota {
-		return
+		return nil
 	}
 	m.quotasFlushLock.Lock()
 	defer m.quotasFlushLock.Unlock()
@@ -558,11 +559,11 @@ func (m *baseMeta) doFlushQuotas() {
 	m.quotaMu.RUnlock()
 
 	if len(allQuotas) == 0 {
-		return
+		return nil
 	}
 	if err := m.en.doFlushQuotas(Background(), allQuotas); err != nil {
 		logger.Warnf("Flush quotas: %s", err)
-		return
+		return err
 	}
 	m.quotaMu.Lock()
 	for _, snap := range allQuotas {
@@ -581,6 +582,7 @@ func (m *baseMeta) doFlushQuotas() {
 	}
 	m.quotaMu.Unlock()
 
+	return nil
 }
 
 func (m *baseMeta) HandleQuota(ctx Context, cmd uint8, qkey string, qtype uint32, quotas map[string]*Quota, strict, repair bool, create bool) error {
