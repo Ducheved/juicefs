@@ -135,6 +135,61 @@ func TestRedisDirQuotaRefreshFaults(t *testing.T) {
 	})
 }
 
+func TestRedisDirQuotaExternalWriter(t *testing.T) {
+	conf := testConfig()
+	conf.Heartbeat = 100 * time.Millisecond
+	m, err := newRedisMeta("redis", "127.0.0.1:6379/10", conf)
+	if err != nil {
+		t.Fatalf("create meta: %s", err)
+	}
+	if err = m.Reset(); err != nil {
+		t.Fatalf("reset: %s", err)
+	}
+	if err = m.Init(testFormat(), false); err != nil {
+		t.Fatalf("init: %s", err)
+	}
+	r := m.(*redisMeta)
+	ctx := Background()
+	var d, ino Ino
+	var attr Attr
+	if st := m.Mkdir(ctx, RootInode, "ext", 0755, 0, 0, &d, &attr); st != 0 {
+		t.Fatalf("mkdir: %s", st)
+	}
+	r.getBase().loadQuotas()
+	if st := m.Create(ctx, d, "f0", 0644, 0, 0, &ino, &attr); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	m.Close(ctx, ino)
+	field := d.String()
+	writeQuota := func(maxInodes, used int64) {
+		r.rdb.HSet(ctx, r.dirQuotaKey(), field, r.packQuota(1<<30, maxInodes))
+		r.rdb.HSet(ctx, r.dirQuotaUsedSpaceKey(), field, used*4096)
+		r.rdb.HSet(ctx, r.dirQuotaUsedInodesKey(), field, used)
+	}
+	refresh := func() {
+		time.Sleep(conf.Heartbeat)
+		r.getBase().loadQuotas()
+	}
+	writeQuota(1, 1)
+	refresh()
+	if st := m.Create(ctx, d, "f1", 0644, 0, 0, &ino, &attr); st != syscall.EDQUOT {
+		t.Fatalf("quota created by raw HSET is not enforced: %s", st)
+	}
+	writeQuota(10, 1)
+	refresh()
+	if st := m.Create(ctx, d, "f1", 0644, 0, 0, &ino, &attr); st != 0 {
+		t.Fatalf("raised limit is not seen: %s", st)
+	}
+	m.Close(ctx, ino)
+	r.rdb.HDel(ctx, r.dirQuotaKey(), field)
+	r.rdb.HDel(ctx, r.dirQuotaUsedSpaceKey(), field)
+	r.rdb.HDel(ctx, r.dirQuotaUsedInodesKey(), field)
+	refresh()
+	if n := len(r.getBase().dirQuotas); n != 0 {
+		t.Fatalf("quota deleted by raw HDEL is still cached: %d", n)
+	}
+}
+
 func TestKeyDB(t *testing.T) { // skip mutate
 	if os.Getenv("SKIP_NON_CORE") == "true" {
 		t.Skipf("skip non-core test")
