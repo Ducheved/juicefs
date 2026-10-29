@@ -4634,6 +4634,16 @@ func (m *dbMeta) doDelQuota(ctx Context, qtype uint32, key uint64) error {
 	})
 }
 
+func (m *dbMeta) doHasDirQuotas(ctx Context) (bool, error) {
+	var exist bool
+	err := m.simpleTxn(ctx, func(s *xorm.Session) error {
+		var e error
+		exist, e = s.Exist(&dirQuota{})
+		return e
+	})
+	return exist, err
+}
+
 func (m *dbMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
 	format := m.getFormat()
 	var dirQuotasList []dirQuota

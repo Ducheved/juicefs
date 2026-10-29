@@ -4022,6 +4022,11 @@ func (m *redisMeta) hscan(ctx context.Context, key string, f func([]string) erro
 	return nil
 }
 
+func (m *redisMeta) doHasDirQuotas(ctx Context) (bool, error) {
+	n, err := m.rdb.Exists(ctx, m.dirQuotaUsedInodesKey()).Result()
+	return n > 0, err
+}
+
 func (m *redisMeta) hmgetQuotas(ctx Context, config *quotaKeys, keys []uint64) (map[string]string, map[string]string, map[string]string, error) {
 	usedInodes, usedSpace, limits := make(map[string]string), make(map[string]string), make(map[string]string)
 	for i := 0; i < len(keys); i += quotaBatchSize {

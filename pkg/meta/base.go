@@ -112,6 +112,7 @@ type engine interface {
 	doSetQuota(ctx Context, qtype uint32, key uint64, quota *Quota) (created bool, err error)
 	doDelQuota(ctx Context, qtype uint32, key uint64) error
 	doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error)
+	doHasDirQuotas(ctx Context) (bool, error)
 	doFlushQuotas(ctx Context, quotas []*iQuota) error
 	cleanUgUsage(ctx Context, qtype uint32) error
 
@@ -316,6 +317,7 @@ type baseMeta struct {
 	dirParents      map[Ino]dirParent // directory inode -> parent inode
 	dirQuotas       map[uint64]*Quota // directory inode -> quota
 	noDirQuotas     map[uint64]*int64
+	noDirQuota      atomic.Bool
 	userQuotas      map[uint64]*Quota // uid -> quota
 	groupQuotas     map[uint64]*Quota // gid -> quota
 
@@ -1184,6 +1186,9 @@ func (m *baseMeta) StatFS(ctx Context, ino Ino, totalspace, availspace, iused, i
 	}
 	var usage *Quota
 	for _, c := range m.quotaChain(ctx, m.checkRoot(ino)) {
+		if c.unresolved {
+			continue
+		}
 		q := c.quota.snap()
 		q.sanitize()
 		if usage == nil {
@@ -1766,8 +1771,8 @@ func (m *baseMeta) Link(ctx Context, inode, parent Ino, name string, attr *Attr)
 	if m.checkGroupQuota(ctx, uint64(attr.Gid), 0, 1) {
 		return syscall.EDQUOT
 	}
-	if m.checkDirQuota(ctx, parent, align4K(attr.Length), 1) {
-		return syscall.EDQUOT
+	if st := m.checkDirQuota(ctx, parent, align4K(attr.Length), 1); st != 0 {
+		return st
 	}
 
 	defer func() { m.of.InvalidateChunk(inode, invalidateAttrOnly) }()
@@ -1966,8 +1971,8 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 			return st
 		}
 		if attr.Typ == TypeDirectory {
-			qino, q := m.getQuotaParent(ctx, *inode)
-			if q != nil && qino == *inode {
+			if chain := m.quotaChain(ctx, *inode); len(chain) > 0 && chain[0].inode == *inode && !chain[0].unresolved {
+				q := chain[0].quota
 				space, inodes = q.UsedSpace+align4K(0), q.UsedInodes+1
 			} else {
 				var sum Summary
@@ -1982,8 +1987,10 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 			space, inodes = align4K(attr.Length), 1
 		}
 		// TODO: dst exists and is replaced or exchanged
-		if quotaDst > 0 && m.checkDirQuota(ctx, parentDst, space, inodes) {
-			return syscall.EDQUOT
+		if quotaDst > 0 {
+			if st := m.checkDirQuota(ctx, parentDst, space, inodes); st != 0 {
+				return st
+			}
 		}
 	}
 	tinode := new(Ino)

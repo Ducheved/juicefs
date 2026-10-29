@@ -3670,6 +3670,15 @@ func (m *kvMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota,
 	return dirQuotas, userQuotas, groupQuotas, nil
 }
 
+func (m *kvMeta) doHasDirQuotas(ctx Context) (bool, error) {
+	var exist bool
+	err := m.client.simpleTxn(ctx, func(tx *kvTxn) error {
+		exist = tx.exist(m.fmtKey("QD"))
+		return nil
+	}, 0)
+	return exist, err
+}
+
 func (m *kvMeta) getDirQuotas(ctx Context, inodes []uint64, quotas map[uint64]*Quota) error {
 	for i := 0; i < len(inodes); i += quotaBatchSize {
 		batch := inodes[i:min(i+quotaBatchSize, len(inodes))]

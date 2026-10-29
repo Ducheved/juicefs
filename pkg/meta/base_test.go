@@ -123,6 +123,18 @@ func TestRedisDirQuotaRefresh(t *testing.T) {
 	})
 }
 
+func TestRedisDirQuotaRefreshFaults(t *testing.T) {
+	testDirQuotaRefreshFaults(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newRedisMeta("redis", "127.0.0.1:6379/10", conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		return m
+	})
+}
+
 func TestKeyDB(t *testing.T) { // skip mutate
 	if os.Getenv("SKIP_NON_CORE") == "true" {
 		t.Skipf("skip non-core test")
@@ -5077,6 +5089,107 @@ func testDirQuotaRefresh(t *testing.T, newClient func() Meta) {
 	refresh(m1)
 	if st := create(m1, y, "f4"); st != 0 {
 		t.Fatalf("create after quota removed: %s", st)
+	}
+}
+
+type quotaFaultEngine struct {
+	engine
+	failLoad  bool
+	loads     int
+	onGetAttr func(Ino)
+}
+
+func (e *quotaFaultEngine) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
+	if len(scope.dirs) > 0 {
+		e.loads++
+	}
+	if e.failLoad {
+		return nil, nil, nil, syscall.EIO
+	}
+	return e.engine.doLoadQuotas(ctx, scope)
+}
+
+func (e *quotaFaultEngine) doGetAttr(ctx Context, inode Ino, attr *Attr) syscall.Errno {
+	st := e.engine.doGetAttr(ctx, inode, attr)
+	if e.onGetAttr != nil {
+		e.onGetAttr(inode)
+	}
+	return st
+}
+
+func testDirQuotaRefreshFaults(t *testing.T, newClient func() Meta) {
+	m := newClient()
+	if err := m.Reset(); err != nil {
+		t.Fatalf("reset meta: %s", err)
+	}
+	if err := m.Init(testFormat(), false); err != nil {
+		t.Fatalf("init meta: %s", err)
+	}
+	ctx := Background()
+	base := m.getBase()
+	base.loadQuotas()
+	fault := &quotaFaultEngine{engine: base.en}
+	base.en = fault
+	defer func() { base.en = fault.engine }()
+	var d, x, ino Ino
+	var attr Attr
+	if st := m.Mkdir(ctx, RootInode, "d", 0755, 0, 0, &d, &attr); st != 0 {
+		t.Fatalf("mkdir: %s", st)
+	}
+	if st := m.Mkdir(ctx, d, "x", 0755, 0, 0, &x, &attr); st != 0 {
+		t.Fatalf("mkdir: %s", st)
+	}
+	if fault.loads != 0 || len(base.noDirQuotas) != 0 {
+		t.Fatalf("quota lookups without any quota: loads %d negative %d", fault.loads, len(base.noDirQuotas))
+	}
+
+	if err := m.HandleQuota(ctx, QuotaSet, "/d", DirQuotaType, map[string]*Quota{"/d": {MaxSpace: 1 << 30, MaxInodes: 100}}, false, false, false); err != nil {
+		t.Fatalf("set quota: %s", err)
+	}
+	fault.failLoad = true
+	if st := m.Create(ctx, x, "f", 0644, 0, 0, &ino, &attr); st != syscall.EIO {
+		t.Fatalf("create with unknown quota: %s", st)
+	}
+	base.updateDirQuota(ctx, x, 4096, 1)
+	base.doFlushQuotas()
+	fault.failLoad = false
+	base.loadQuotas()
+	base.doFlushQuotas()
+	qs := make(map[string]*Quota)
+	if err := m.HandleQuota(ctx, QuotaGet, "/d", DirQuotaType, qs, false, false, false); err != nil || qs["/d"].UsedInodes != 2 {
+		t.Fatalf("delta kept while quota unknown: %+v %v", qs["/d"], err)
+	}
+
+	base.parentMu.Lock()
+	base.dirParents[d] = dirParent{parent: x, touched: time.Now().UnixNano()}
+	base.dirParents[x] = dirParent{parent: d, touched: time.Now().UnixNano()}
+	base.parentMu.Unlock()
+	done := make(chan syscall.Errno)
+	go func() { done <- base.checkDirQuota(ctx, x, 0, 1) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parent loop is not detected")
+	}
+	if _, ok := base.dirParents[x]; ok {
+		t.Fatalf("looping parent is kept")
+	}
+
+	var y Ino
+	if st := m.Mkdir(ctx, RootInode, "y", 0755, 0, 0, &y, &attr); st != 0 {
+		t.Fatalf("mkdir: %s", st)
+	}
+	base.checkDirQuota(ctx, x, 0, 1)
+	time.Sleep(base.conf.Heartbeat)
+	fault.onGetAttr = func(ino Ino) {
+		if ino == x {
+			base.setDirParent(x, y)
+		}
+	}
+	base.refreshDirParents(ctx)
+	fault.onGetAttr = nil
+	if p, _ := base.getDirParent(ctx, x); p != y {
+		t.Fatalf("refresh overwrote a newer parent: %d", p)
 	}
 }
 
