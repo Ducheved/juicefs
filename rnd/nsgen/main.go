@@ -174,6 +174,7 @@ func main() {
 	trash := flag.Int("trash-days", 7, "trash days")
 	measure := flag.Bool("families", true, "measure memory by key family")
 	reset := flag.Bool("reset", true, "reset meta before generating")
+	offset := flag.Int("user-offset", 0, "first user index")
 	flag.Parse()
 
 	conf := meta.DefaultConf()
@@ -194,8 +195,12 @@ func main() {
 		TrashDays:   *trash,
 		DirStats:    true,
 	}
-	if err := m.Init(format, true); err != nil {
-		log.Fatalf("init: %s", err)
+	if *reset {
+		if err := m.Init(format, true); err != nil {
+			log.Fatalf("init: %s", err)
+		}
+	} else if _, err := m.Load(true); err != nil {
+		log.Fatalf("load: %s", err)
 	}
 	if err := m.NewSession(true); err != nil {
 		log.Fatalf("session: %s", err)
@@ -221,7 +226,7 @@ func main() {
 	userIno := make([]meta.Ino, sh.Users)
 	for i := 0; i < sh.Users; i++ {
 		var attr meta.Attr
-		name := fmt.Sprintf("u%06d", i)
+		name := fmt.Sprintf("u%06d", i+*offset)
 		check(m.Mkdir(ctx, meta.RootInode, name, 0755, 0, 0, &userIno[i], &attr), "mkdir user")
 		dirs++
 		if sh.UserQuota {
@@ -248,7 +253,7 @@ func main() {
 				check(m.Mkdir(ctx, userIno[j.user], dname, 0755, 0, 0, &dino, &attr), "mkdir dir")
 				atomic.AddInt64(&dirs, 1)
 				if sh.DirQuota {
-					p := fmt.Sprintf("/u%06d/%s", j.user, dname)
+					p := fmt.Sprintf("/u%06d/%s", j.user+*offset, dname)
 					quotaMu.Lock()
 					err := m.HandleQuota(ctx, meta.QuotaSet, p, meta.DirQuotaType, map[string]*meta.Quota{p: {MaxSpace: 1 << 40, MaxInodes: 1 << 30}}, false, false, false)
 					quotaMu.Unlock()
