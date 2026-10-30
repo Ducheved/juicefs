@@ -166,11 +166,15 @@ func load(db *pebble.DB, l layout, threads int) {
 
 func settle(db *pebble.DB) {
 	start := time.Now()
-	for {
+	var last int64 = -1
+	for idle := 0; idle < 3; {
 		m := db.Metrics()
-		if m.Compact.NumInProgress == 0 && m.Compact.EstimatedDebt == 0 {
-			break
+		if m.Compact.NumInProgress == 0 && m.Compact.Count == last {
+			idle++
+		} else {
+			idle = 0
 		}
+		last = m.Compact.Count
 		time.Sleep(5 * time.Second)
 	}
 	m := db.Metrics()
