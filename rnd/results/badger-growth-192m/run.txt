@@ -1,0 +1,2 @@
+gen 0 failed: rnd/badger-growth.sh: line 17: 10541 Killed                  bash -c "echo \$\$ > $CG/cgroup.procs; echo \$\$ > $CA/cgroup.procs; exec \"\$@\"" capped "$@" oom_kills=1 cg_max_mb=192
+exit=1

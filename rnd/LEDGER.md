@@ -251,3 +251,12 @@ Script: `rnd/pg-growth.sh`; PostgreSQL 16.15, `shared_buffers 64MB`, `fsync on`,
 | 4 M | 642 | 1.07 | 192 | 0 | 375 | 343 / 1277 | 814 / 2883 | 1068 / 2780 | 889 |
 
 Against Kvrocks at 4 M under the same cap (RUN, both tables): bulk generation 375 s vs ≈ 800–930 s per million; hot stat p50 equal (≈ 350 µs); uniform stat p50 814 vs 533 µs; create p50 ≈ 1.0–1.1 ms vs ≈ 0.6 ms; disk 642 vs 251 B/file; WAL bounded by `max_wal_size` (1 GB) vs Kvrocks' 3 h archive. The probe walks paths with `Lookup` on SQL (Resolve is ENOTSUP) and with one Lua `Resolve` on Kvrocks, so stat includes more round trips on PostgreSQL.
+
+## Badger growth (in-process engine)
+
+Script: `rnd/badger-growth.sh`; `badger://…?sync=true`; JuiceFS sets only `SyncWrites`, the rest are Badger v4 defaults (block cache 256 MB, memtable 64 MB × 5, `IndexCacheSize 0` = all table indexes in RAM) (SOURCE `pkg/meta/tkv_badger.go`). The engine lives inside the client, so the cgroup holds `nsgen`/`probe` itself: engine + JuiceFS client + 32 generator threads, unlike the server-only caps above.
+
+| Item | Label | Value |
+|---|---|---|
+| 10 000 files, 192 MiB cap | RUN | peak 98 MB, no OOM (smoke) |
+| 1 M-file round, 192 MiB cap | RUN | OOM-killed during the first round (`results/badger-growth-192m`) |

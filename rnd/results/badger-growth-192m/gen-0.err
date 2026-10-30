@@ -1,0 +1,12 @@
+2026/10/30 13:20:16.093124 juicefs[10541] <INFO>: Meta address: badger:///tmp/claude-0/-home-user/40fd7f72-6e5a-5b1e-910b-f8925f83d035/scratchpad/stand/badger-growth?sync=true [NewClient@interface.go:686]
+2026/10/30 13:20:16.097744 badger[10541] <INFO>: All 0 tables opened in 0s [Infof@logger.go:35]
+2026/10/30 13:20:16.098113 badger[10541] <INFO>: Discard stats nextEmptySlot: 0 [Infof@logger.go:35]
+2026/10/30 13:20:16.098145 badger[10541] <INFO>: Set nextTxnTs to 0 [Infof@logger.go:35]
+2026/10/30 13:20:16.098333 badger[10541] <INFO>: DropAll called. Blocking writes... [Infof@logger.go:35]
+2026/10/30 13:20:16.098399 badger[10541] <INFO>: Writes flushed. Stopping compactions now... [Infof@logger.go:35]
+2026/10/30 13:20:16.099129 badger[10541] <INFO>: Deleted 0 SSTables. Now deleting value logs... [Infof@logger.go:35]
+2026/10/30 13:20:16.099243 badger[10541] <INFO>: Value logs deleted. Creating value log file: 1 [Infof@logger.go:35]
+2026/10/30 13:20:16.099303 badger[10541] <INFO>: Deleted 1 value log files. DropAll done. [Infof@logger.go:35]
+2026/10/30 13:20:16.100189 badger[10541] <INFO>: Resuming writes [Infof@logger.go:35]
+2026/10/30 13:20:16.103349 juicefs[10541] <INFO>: Create session 1 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+rnd/badger-growth.sh: line 17: 10541 Killed                  bash -c "echo \$\$ > $CG/cgroup.procs; echo \$\$ > $CA/cgroup.procs; exec \"\$@\"" capped "$@"
