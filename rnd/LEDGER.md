@@ -260,3 +260,4 @@ Script: `rnd/badger-growth.sh`; `badger://…?sync=true`; JuiceFS sets only `Syn
 |---|---|---|
 | 10 000 files, 192 MiB cap | RUN | peak 98 MB, no OOM (smoke) |
 | 1 M-file round, 192 MiB cap | RUN | OOM-killed during the first round (`results/badger-growth-192m`) |
+| 1 M-file round, 2 GiB cap | RUN, partial | peak 649 MB after ~4 min of the first round; run stopped before the round ended (moved to a larger machine) |
