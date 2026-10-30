@@ -167,3 +167,29 @@ All-in-memory engine with Raft and subtree partitions: ≈ 600 → 300 → 150 �
 | Directory parent verification with quotas | up to 1e4 GET per heartbeat per writing mount; now every ten heartbeats, batch 1 000 | `quota.go` refreshDirParents, `50336ef` |
 
 Decision (owner, 2026-10-30): no on-demand metadata reads from S3 in the main design; metadata lives on SSD with a bounded RAM cache, S3 keeps file contents and rare batch backups.
+
+## Kvrocks qualification on the fork
+
+| Item | Label | Value |
+|---|---|---|
+| Full `testMeta` on Kvrocks 2.17.0 (`redis-databases 16`, `sync yes`) with `fix/kvrocks-guards` | RUN | pass, 33.4 s (`TestKvrocksClient`, gated by `KVROCKS_ISOLATED_DB`) |
+| `redis-databases 0` (Kvrocks default): `SELECT 5` returns OK, a key set in DB 5 is visible in DB 0, `CLIENT INFO` has `namespace=` instead of `db=` | RUN | the fork now refuses database N ≠ 0 there (`50bb930`) |
+| `DBSIZE` on a 4 M-file database | RUN | 0 until a DBSIZE scan runs; load/restore emptiness now checked with SCAN (`50bb930`) |
+| Hash field read in Kvrocks = metadata CF + subkey CF point reads | SOURCE | kvrocks.apache.org/community/data-structure-on-rocksdb; explains ≈ 2.5× stat vs Valkey |
+
+## Community record (juicedata/juicefs issues, PRs, discussions; anonymous reads)
+
+- Declined as engines by maintainers: Pika/Codis (no transactions, #4355), RocksDB (use Badger, #1518), DragonflyDB (#3363), Tendis (#6268), HBase and Aerospike; SlateDB engine PR #7174 kept pending as "not very stable". Kvrocks is not officially supported; users asked to skip the `noeviction` check for disk engines (#3195, #3888).
+- Redis Cluster pins a volume to one hash slot, so it does not shard memory (docs `redis_best_practices.md`). For per-tenant isolation the community answer is one volume per tenant (DISC #5529).
+- Maintainers recommend TiKV above ≈ 100 M files; the largest reported deployments exceed 20 B files (DISC #3200).
+- Automatic backup is skipped above 1 M inodes at `--backup-meta` ≤ 1 h; there is no incremental backup; binary dump ≈ 1/3 of JSON (docs `metadata_dump_load.md`, #4974, #7290, #5276).
+- Quota loading: upstream replaced 2 HGET per quota with 3 HSCAN (#7405) and batched TiKV gets (#7171); nobody proposed scoped refresh or loading outside the flush lock.
+- Memory blow-ups in the field come from fragmentation, not only file count: 30 M files with 400 GB in Redis from huge chunk lists after random writes (DISC #6338).
+- No proposal to tier, evict or lazy-load metadata out of Redis exists (searched EN and ZH).
+
+## Literature numbers used in the SSD design
+
+- Workload mix (Spotify HDFS trace via HopsFS, FAST'17): read 68.7 %, stat 17 %, list 9 %, create 1.2 %, rename 1.3 % (0.03 % of renames are directories). Alibaba Pangu (InfiniFS, FAST'22): directory rename + set_permission ≈ 0.0083 % of operations. Partitioning by tenant keeps the hot path single-partition.
+- Compression of JuiceFS-like records (local run, zstd-3 on 4–64 KiB blocks): 3.5–4× for FUSE-created metadata, 6–7× for bulk-imported, 2.2× worst case; lz4 2.5–4×. RocksDB in Kvrocks defaults to snappy from level 2 only.
+- Valkey bytes per small key: 7.2 102.5 B, 9.1 64 B (Percona). Valkey listpack buckets would need `hash-max-listpack-value` ≥ 128 for JuiceFS attributes.
+- S3 Standard small GET: p50 ≈ 30–40 ms, p99 ≈ 170 ms; ≈ 30 ms + 20 ms/MiB (VLDB'23). A cold stat served from S3 would cost one paid GET and tens of milliseconds, which is why on-demand S3 metadata is out of the main design.
