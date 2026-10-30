@@ -1,0 +1,39 @@
+2026-10-30 18:48:23.914950 I | Found 5 WALs
+2026-10-30 18:48:23.915011 I |   - 005709: {(/srv/stand/stand/pebble-bench,000)}
+2026-10-30 18:48:23.915021 I |   - 005735: {(/srv/stand/stand/pebble-bench,000)}
+2026-10-30 18:48:23.915028 I |   - 005760: {(/srv/stand/stand/pebble-bench,000)}
+2026-10-30 18:48:23.915035 I |   - 005784: {(/srv/stand/stand/pebble-bench,000)}
+2026-10-30 18:48:23.915041 I |   - 005809: {(/srv/stand/stand/pebble-bench,000)}
+2026-10-30 18:48:23.977410 I | [JOB 1] WAL 005809: {(/srv/stand/stand/pebble-bench,000)} stopped reading at offset: (/srv/stand/stand/pebble-bench/005809.log: 0); replayed 0 keys in 0 batches
+      |                             |                |       |   ingested   |     moved    |    written   |       |    amp   |    val sep
+level | tables  size val-bl vtables | score  ff  cff |   in  | tables  size | tables  size | tables  size |  read |   r   w  | refsz  valblk
+------+-----------------------------+----------------+-------+--------------+--------------+--------------+-------+----------+--------------
+    0 |     3  1.9MB     0B       0 |    - 0.50 0.50 |    0B |     0     0B |     0     0B |     0     0B |    0B |   1    0 |    0B      0B
+    1 |     0     0B     0B       0 |    -    0    0 |    0B |     0     0B |     0     0B |     0     0B |    0B |   0    0 |    0B      0B
+    2 |     0     0B     0B       0 |    -    0    0 |    0B |     0     0B |     0     0B |     0     0B |    0B |   0    0 |    0B      0B
+    3 |     0     0B     0B       0 |    -    0    0 |    0B |     0     0B |     0     0B |     0     0B |    0B |   0    0 |    0B      0B
+    4 |    16   55MB     0B       0 |    - 0.85 0.85 |    0B |     0     0B |     0     0B |     0     0B |    0B |   1    0 |    0B      0B
+    5 |   100  409MB     0B       0 |    - 0.97 0.97 |    0B |     0     0B |     0     0B |     0     0B |    0B |   1    0 |    0B      0B
+    6 |   243  2.5GB     0B       0 |    - 0.94 0.94 |    0B |     0     0B |     0     0B |     0     0B |    0B |   1    0 |    0B      0B
+total |   362  3.0GB     0B       0 |    -    -    - |    0B |     0     0B |     0     0B |     0     0B |    0B |   4    0 |    0B      0B
+--------------------------------------------------------------------------------------------------------------------------------------------
+WAL: 1 files (0B)  in: 0B  written: 0B (0% overhead)
+Flushes: 1
+Compactions: 0  estimated debt: 57MB  in progress: 0 (0B)  canceled: 0 (0B)  failed: 0  problem spans: 0
+             default: 0  delete: 0  elision: 0  move: 0  read: 0  tombstone-density: 0  rewrite: 0  copy: 0  multi-level: 0  blob-file-rewrite:  0
+MemTables: 1 (512KB)  zombie: 1 (256KB)
+Zombie tables: 0 (0B, local: 0B)
+Backing tables: 0 (0B)
+Virtual tables: 0 (0B)
+Local tables size: 3.0GB
+Compression types: snappy: 362
+Table stats: all loaded
+Block cache: 0 entries (0B)  hit rate: 0.0%
+File cache: 362 tables, 0 blobfiles (175KB)  hit rate: 0.0%
+Range key sets: 0  Tombstones: 0  Total missized tombstones encountered: 0
+Snapshots: 0  earliest seq num: 0
+Table iters: 0
+Filter utility: 0.0%
+Ingestions: 0  as flushable: 0 (0B in 0 tables)
+Cgo memory usage: 784KB  block cache: 16KB (data: 0B, maps: 16KB, entries: 0B)  memtables: 768KB
+

@@ -1,0 +1,8 @@
+{"block_cache_bytes":0,"disk_bytes":3206538591,"memtable_bytes":524288,"phase":"settle","seconds":20.001461258}
+{"block_cache_hit_ratio":0.9995620994931033,"cpu_us_per_op":13.351262754249513,"label":"hot10k","ops_per_s":148867.05,"p50_us":12,"p99_us":31,"phase":"read","readers":8}
+{"block_cache_hit_ratio":0.9734642457798444,"cpu_us_per_op":48.67527807939107,"label":"all","ops_per_s":27537.1,"p50_us":83,"p99_us":2045,"phase":"read","readers":8}
+{"cpu_us_per_txn":128.91405903240152,"p50_us":517,"p99_us":856,"phase":"write","txn_per_s":1802.4,"wal_bytes":8498935,"writers":1}
+{"cpu_us_per_txn":102.02841003096276,"p50_us":915,"p99_us":1231,"phase":"write","txn_per_s":4230.9,"wal_bytes":28430407,"writers":4}
+{"cpu_us_per_txn":66.79865117801285,"p50_us":1132,"p99_us":1980,"phase":"write","txn_per_s":13597.05,"wal_bytes":92553184,"writers":16}
+{"cpu_us_per_txn":63.77334522002863,"p50_us":2603,"p99_us":8008,"phase":"write","txn_per_s":22041.45,"wal_bytes":196481703,"writers":64}
+{"cpu_us_per_txn":69.65083670499928,"p50_us":9225,"p99_us":45992,"phase":"write","txn_per_s":20996.05,"wal_bytes":295571361,"writers":256}

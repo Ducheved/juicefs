@@ -1,0 +1,4 @@
+mem=2G cache_mb=768 users=3900 files=39000000 cpus=0-1
+rc=143
+{"cpu_s":395.275021,"files":39000000,"phase":"load","seconds":277.876053969}
+peak_mb=2048 oom_kills=0 cpu_s=440 dir_bytes=3384685938

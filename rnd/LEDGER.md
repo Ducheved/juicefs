@@ -290,3 +290,34 @@ Cycle = Create + Close + Unlink (two write transactions). ≈ 10 k files in 512 
 | Retried transactions at 256 / 64 | 16 846 / 3 739 | 2 031 / 431 | 2 / 0 |
 
 Kvrocks is flat in writers at about half its CPU: `exec` is `exclusive` (`src/commands/cmd_txn.cc:133`), the transaction is one global `txn_write_batch_` on `Storage` committed with `sync` inside the exclusive section (`src/storage/storage.cc` BeginTxn/CommitTxn), so every JuiceFS write transaction holds the whole server through its fsync. Not configurable. Lua scripts are not wrapped in that batch: each writing `redis.call` commits separately (`src/storage/scripting.cc`), so moving writes into Lua would lose crash atomicity. One process writing into 8 directories (`results/vm/write-ceiling-hotdir*`) caps both Valkey (876) and Kvrocks (560) because the client serialises transactions per inode (`txLock`, 1 024 stripes).
+
+## Pebble with the JuiceFS TKV layout, 39 M files, 2 GiB cgroup (`rnd/pebblebench`, `results/vm/pebble-bench*`)
+
+Pebble v2.1.7 in one process, no network, no replication, no conflict checks. Cgroup `memory.max` 2 GiB including page cache, cores 0-1, `GOMAXPROCS=2`, `GOMEMLIMIT=1GiB`, block cache 768 MB, memtable 64 MB, bloom 10 bits on all levels, default compression. Keys exactly as `tkv.go`: per file `A<ino>I` (72 B attr), `A<parent>D<name>`, `A<ino>C<0>` (one 24 B slice); per dir attr and `U<ino>` stats; names and sizes from `rnd/corpus`. Lookup = dentry get + inode get. Create = parent attr get + dentry get + three sets, committed with `Sync`.
+
+| Item | Label | Value |
+|---|---|---|
+| Load 39 M files, 2 threads, unsynced batches | RUN | 278 s (140 k files/s), 395 s CPU |
+| Size after compactions stop | RUN | SST 3.0 GB in 362 tables (L6 2.5 GB) ≈ 77 B/file; disk incl. WAL 3.21 GB ≈ 82 B/file |
+| Memory | RUN | cgroup at the 2 GiB cap (page cache included), 0 OOM kills in load and in reads/writes; anonymous vs page cache split during reads not recorded (during load: anon 76 MB, file 1.95 GB) |
+| Lookup, 10 k hot files, 8 readers | RUN | 148.9 k/s, p50 12 µs, p99 31 µs, 13 µs CPU per lookup |
+| Lookup, uniform over all 39 M, 8 readers | RUN | 27.5 k/s, p50 83 µs, p99 2.0 ms, 49 µs CPU per lookup, block cache hit 97 % |
+| Synced create, writers 1 / 4 / 16 / 64 / 256 | RUN | 1 802 / 4 231 / 13 597 / 22 041 / 20 996 txn/s; p99 0.86 / 1.2 / 2.0 / 8.0 / 46 ms; 129 / 102 / 67 / 64 / 70 µs CPU per txn |
+| Group commit | SOURCE | `record/log_writer.go` v2.1.7: `flushLoop` takes `snapshotForPop` of all waiting syncs, one `syncWithLatency`, then `pop(snap)` releases them |
+| Not comparable to the engine tables above | NOTE | those count JuiceFS create+unlink cycles through the client and network; this is the storage layer alone |
+| First attempt | NOTE | settle loop waited for `EstimatedDebt == 0`, which Pebble never reached with compactions idle; the process sat idle ~35 min and was stopped; settle now waits for three idle 5 s checks with no new compactions |
+
+## External facts used in `rfc/metad.md` (REPORTED, collected 2026-10-30, not re-run here)
+
+| Fact | Source |
+|---|---|
+| etcd keeps every key in an in-memory B-tree, ≈ 120 B + key per key; default quota 2 GiB, 8 GiB suggested maximum | etcd.io/docs/v3.6/benchmarks/etcd-storage-memory-benchmark, etcd.io/docs/v3.6/dev-guide/limit |
+| dqlite keeps the database in an in-memory VFS; snapshots copy it | github.com/canonical/dqlite issues 368, discussion 602 |
+| rqlite: explicit BEGIN/COMMIT undefined, only one-shot batch transactions | rqlite.io/docs/api/api (v10) |
+| FoundationDB: 4 GiB per server process required; `memory` default 8 GiB; operator default topology ≈ 12 processes | apple.github.io/foundationdb administration.html, configuration.html (8.0), FoundationDB/fdb-kubernetes-operator |
+| TiKV dev/test 8 cores / 32 GB, PD 4 cores / 8 GB | docs.pingcap.com/tidb/stable/hardware-and-software-requirements (v8.5) |
+| CockroachDB ≥ 4 vCPU and 4 GiB per vCPU; YugabyteDB on Kubernetes ≥ 15 GB per node | docs.cockroachlabs.com recommended-production-settings, docs.yugabyte.com/stable/deploy/checklist |
+| dragonboat last release v3.3.8 (2023-09-25); etcd-io/raft v3.7.0 (2026-06-23); hashicorp/raft v1.8.0 (2026-09-16) | GitHub releases of each project |
+| JuiceFS EE: all metadata in memory on 3 Raft nodes; ≈ 600 → 50 B/file with compression, 100 B/file planned, 300 M files in 30 GiB | juicefs.com/en/blog/engineering/reduce-metadata-memory-usage (2024-02-22) |
+| CephFS embeds single-link inodes in directory fragments; backtraces replace the anchor table; async create/unlink with delegated inode numbers since kernel 5.7 | Weil OSDI'06; docs.ceph.com Firefly release notes; lore.kernel.org 20200212172729 |
+| Lustre metadata write-back cache: 10–20× on createmany in VMs, a proposal (LU-10983), not shipped | wiki.lustre.org LUG2023-Metadata_WBC-Drokin.pdf |
