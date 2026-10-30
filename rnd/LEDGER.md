@@ -69,3 +69,18 @@ Background quota cost, one client, heartbeat 1 s, 10 active quotas (RUN, `rnd/re
 | #3555 partial write of a failed command inside EXEC | RUN | reproduced on 2.17.0 with `write_batch_max_bytes 180` |
 | Full JuiceFS `testMeta` on Kvrocks (`redis-databases 16`, `write_options.sync yes`) | RUN | pass, 33 s |
 | Fixed hot probe while namespace grows 1 → 4 M files, block cache 512 MB, `sync yes` | RUN | RSS 193 / 447 / 766 / 794 MB (plateau at cache size + ~250 MB), disk 0.8 / 1.9 / 2.8 / 3.7 GB, stat p50 154–175 µs (Valkey 95), create p50 506–612 µs (Valkey ~550), bulk create 3.4× slower than Valkey (`rnd/results/kvrocks`) |
+
+## Review of the capsule PoC (independent adversarial pass)
+
+Fixed in `fbe4590`, each with a test that fails on `6391999`:
+
+- GC: capsule slices are scanned before hot keys and the scan repeats if `capsuleVer` changed; a hydration during `ScanSlices` no longer hides restored slices.
+- Offline fence: an `capsuleEvicting` marker makes `NewSession` refuse while an eviction runs; the commit txn WATCHes `allSessions` and re-checks that only the evicting session is alive.
+- Session-less tools and read-only mounts load the cold set lazily; they get EIO on cold contents instead of an empty directory, and `quota check/set` can no longer rewrite usage or create entries inside a cold root.
+- `juicefs metadata prefetch` resolves paths with hydrating lookups; `Resolve(force)` hydrates too.
+- A partial drop is resumable (`evict` again finishes it) and `cleanupLeakedInodes/Chunks` skip inodes inside capsule runs.
+- MetaVersion is bumped at the cold commit only; an aborted eviction deletes its uploaded object.
+- Restore batches are bounded by values, not records; per-root hydration locks; ACL get/set hydrate.
+- Gateway and the Java SDK get the capsule storage.
+
+Still open (PoC limits): read-only mounts are not registered as sessions and cannot be detected by the offline fence; walking commands on `/` (compact, tree summary with depth, user/group usage scans) hydrate every unit they touch; periodic metadata backup is refused while units are cold; MetaVersion is never lowered back; a lost ACK on the final hydrate txn can leak the capsule object; chunk keys at or beyond file length are not captured.
