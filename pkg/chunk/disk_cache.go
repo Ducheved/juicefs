@@ -663,9 +663,7 @@ func (cache *diskCache) load(key string) (ReadCloser, error) {
 		return NewPageReader(p), nil
 	}
 	k := cache.getCacheKey(key)
-	if cache.scanned && cache.keys.get(k) == nil {
-		return nil, errNotCached
-	}
+	indexed := !cache.scanned || cache.keys.get(k) != nil
 	cache.Unlock()
 
 	var f *cacheFile
@@ -679,9 +677,17 @@ func (cache *diskCache) load(key string) (ReadCloser, error) {
 	})
 
 	cache.Lock()
-	if err != nil {
+	switch {
+	case err == nil && !indexed:
+		if size := parseObjOrigSize(key); size > 0 {
+			cache.addLocked(key, int32(size), uint32(time.Now().Unix()))
+		}
+	case err != nil:
 		if it := cache.keys.remove(k, false); it != nil {
 			cache.used -= int64(it.size + 4096)
+		}
+		if !indexed && os.IsNotExist(err) {
+			err = errNotCached
 		}
 	}
 	return f, err
@@ -694,9 +700,7 @@ func (cache *diskCache) exist(key string) (bool, error) {
 		return true, nil
 	}
 	k := cache.getCacheKey(key)
-	if cache.scanned && cache.keys.get(k) == nil {
-		return false, errNotCached
-	}
+	indexed := !cache.scanned || cache.keys.get(k) != nil
 	cache.Unlock()
 	var err error
 	err = cache.checkErr(func() error {
@@ -709,9 +713,15 @@ func (cache *diskCache) exist(key string) (bool, error) {
 
 	cache.Lock()
 	if err == nil {
+		if size := parseObjOrigSize(key); !indexed && size > 0 {
+			cache.addLocked(key, int32(size), uint32(time.Now().Unix()))
+		}
 		return true, nil
 	} else if it := cache.keys.remove(k, false); it != nil {
 		cache.used -= int64(it.size + 4096)
+	}
+	if !indexed && os.IsNotExist(err) {
+		err = errNotCached
 	}
 	return false, err
 }
@@ -749,9 +759,13 @@ func (cache *diskCache) add(key string, size int32, atime uint32) {
 		logger.Warnf("Cache add %s with size 0, atime %d", key, atime) // should not happen
 		return
 	}
-	k := cache.getCacheKey(key)
 	cache.Lock()
 	defer cache.Unlock()
+	cache.addLocked(key, size, atime)
+}
+
+func (cache *diskCache) addLocked(key string, size int32, atime uint32) {
+	k := cache.getCacheKey(key)
 	iter := cache.keys.get(k)
 	if iter == nil {
 		iter = &cacheItem{size: size, atime: atime}

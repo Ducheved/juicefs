@@ -70,6 +70,64 @@ func TestScanCached(t *testing.T) {
 	require.Equal(t, num, cache.keys.len())
 }
 
+func TestSharedCacheDir(t *testing.T) {
+	conf := testConf()
+	conf.FreeSpace = 0.01
+	dir := t.TempDir()
+	m := new(cacheManagerMetrics)
+	m.initMetrics()
+	a := newDiskCache(m, dir, 1<<30, conf.CacheItems, 1, &conf, nil)
+	b := newDiskCache(m, dir, 1<<30, conf.CacheItems, 1, &conf, nil)
+	scanned := func(c *diskCache) bool {
+		c.Lock()
+		defer c.Unlock()
+		return c.scanned
+	}
+	require.Eventually(t, func() bool { return scanned(a) && scanned(b) }, 10*time.Second, 10*time.Millisecond)
+
+	key := "chunks/0/0/1_0_1024"
+	data := make([]byte, 1024)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	a.cache(key, NewPage(data), false, false)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(a.cachePath(key))
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+
+	ok, err := b.exist(key)
+	require.NoError(t, err)
+	require.True(t, ok, "block cached by another process is not visible")
+	r, err := b.load(key)
+	require.NoError(t, err)
+	got := make([]byte, len(data))
+	_, err = r.ReadAt(got, 0)
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	require.Equal(t, data, got)
+	b.Lock()
+	require.NotNil(t, b.keys.get(b.getCacheKey(key)))
+	require.Equal(t, int64(1024+4096), b.used)
+	b.Unlock()
+
+	broken := "chunks/0/0/2_0_1024"
+	require.NoError(t, os.MkdirAll(filepath.Dir(b.cachePath(broken)), 0755))
+	require.NoError(t, os.WriteFile(b.cachePath(broken), []byte("short"), 0644))
+	_, err = b.load(broken)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errNotCached)
+	b.Lock()
+	require.Nil(t, b.keys.get(b.getCacheKey(broken)))
+	b.Unlock()
+
+	_, err = b.load("chunks/0/0/3_0_1024")
+	require.ErrorIs(t, err, errNotCached)
+	ok, err = b.exist("chunks/0/0/3_0_1024")
+	require.False(t, ok)
+	require.ErrorIs(t, err, errNotCached)
+}
+
 func BenchmarkLoadCached(b *testing.B) {
 	conf := testConf()
 	defer os.RemoveAll(conf.CacheDir)
