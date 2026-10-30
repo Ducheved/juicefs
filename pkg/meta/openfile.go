@@ -196,6 +196,18 @@ func (o *openfiles) Update(ino Ino, attr *Attr) bool {
 	return false
 }
 
+func (o *openfiles) openInodes() []Ino {
+	o.Lock()
+	defer o.Unlock()
+	var inodes []Ino
+	for ino, of := range o.files {
+		if of.refs > 0 {
+			inodes = append(inodes, ino)
+		}
+	}
+	return inodes
+}
+
 func (o *openfiles) IsOpen(ino Ino) bool {
 	o.Lock()
 	defer o.Unlock()

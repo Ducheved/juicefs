@@ -130,7 +130,7 @@ type capsuleEngine interface {
 	doListCapsules(ctx Context) ([]*CapsuleInfo, error)
 	doLoadCapsuleSet(ctx Context, ver int64) (*capsuleSet, error)
 	doScanCapsuleSlices(ctx Context, store object.ObjectStorage, info *CapsuleInfo, fn func(Ino, Slice) error) error
-	doCheckEvicting(ctx Context) error
+	doAckCapsules(ctx Context, ver int64, busy string) error
 }
 
 func (m *baseMeta) capsuleEngine() (capsuleEngine, error) {
@@ -158,9 +158,58 @@ func (m *baseMeta) refreshCapsules(ctx Context) {
 		logger.Warnf("Load capsules: %s", err)
 		return
 	}
-	if set != nil {
-		m.capsules.Store(set)
+	if set == nil {
+		return
 	}
+	m.capsuleSetMu.Lock()
+	m.capsules.Store(set)
+	m.capsuleSetMu.Unlock()
+	if m.sid == 0 || m.conf.ReadOnly {
+		return
+	}
+	busy := m.capsuleBusy(set)
+	if busy == "" && set.cooling() {
+		m.doFlushDirStat()
+		m.doFlushQuotas()
+	}
+	if err = c.doAckCapsules(ctx, set.ver, busy); err != nil {
+		logger.Warnf("Confirm capsules version %d: %s", set.ver, err)
+	}
+}
+
+func (m *baseMeta) watchCapsules(ctx Context) {
+	defer m.sessWG.Done()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshCapsules(ctx)
+		}
+	}
+}
+
+func (s *capsuleSet) cooling() bool {
+	for _, info := range s.roots {
+		if info.State == CapsuleCooling {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *baseMeta) capsuleBusy(s *capsuleSet) string {
+	if !s.cooling() {
+		return ""
+	}
+	for _, ino := range m.of.openInodes() {
+		if root, ok := s.unitOf(ino); ok && s.roots[root].State == CapsuleCooling {
+			return fmt.Sprintf("inode %d in unit %d is open", ino, root)
+		}
+	}
+	return ""
 }
 
 func (m *baseMeta) capsuleSet(ctx Context) *capsuleSet {
@@ -208,7 +257,7 @@ func (m *baseMeta) ensureHot(ctx Context, ino Ino, entries bool) syscall.Errno {
 		return 0
 	}
 	root, ok := s.unitOf(ino)
-	if !ok || (root == ino && !entries) {
+	if !ok || (root == ino && !entries) || s.roots[root].State == CapsuleCooling {
 		return 0
 	}
 	return m.hydrateUnit(ctx, root)

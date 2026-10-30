@@ -301,6 +301,7 @@ type baseMeta struct {
 	sessCtx Context
 
 	capsules     atomic.Pointer[capsuleSet]
+	capsuleSetMu sync.RWMutex
 	capsuleStore object.ObjectStorage
 	capsuleLocks sync.Map
 
@@ -801,11 +802,6 @@ func (m *baseMeta) currentSessionInfo() []byte {
 }
 
 func (m *baseMeta) NewSession(record bool) error {
-	if c, ok := m.en.(capsuleEngine); ok {
-		if err := c.doCheckEvicting(Background()); err != nil {
-			return err
-		}
-	}
 	m.sessCtx = Background()
 	ctx := m.sessCtx
 	go m.refresh(ctx)
@@ -844,6 +840,11 @@ func (m *baseMeta) NewSession(record bool) error {
 	go m.flushStats(ctx)
 	go m.flushDirStat(ctx)
 	go m.flushQuotas(ctx)
+	if _, ok := m.en.(capsuleEngine); ok {
+		m.refreshCapsules(ctx)
+		m.sessWG.Add(1)
+		go m.watchCapsules(ctx)
+	}
 	m.startDeleteSliceTasks() // start MaxDeletes tasks
 
 	if !m.conf.NoBGJob {

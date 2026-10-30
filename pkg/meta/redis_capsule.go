@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/juicedata/juicefs/pkg/object"
 	"github.com/redis/go-redis/v9"
@@ -18,6 +21,11 @@ import (
 const (
 	capsuleBatch       = 500
 	capsuleBatchValues = 20000
+)
+
+var (
+	capsuleAckTimeout = 30 * time.Second
+	capsuleDropGrace  = 2 * time.Second
 )
 
 type capsuleRestoreOp struct {
@@ -347,19 +355,6 @@ func (m *redisMeta) evictingKey() string {
 	return m.prefix + "capsuleEvicting"
 }
 
-func (m *redisMeta) doCheckEvicting(ctx Context) error {
-	owner, err := m.rdb.Get(ctx, m.evictingKey()).Uint64()
-	if err == redis.Nil {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if owner != m.sid && m.sessionAlive(ctx, owner) {
-		return fmt.Errorf("metadata eviction is running in session %d: %w", owner, syscall.EBUSY)
-	}
-	return nil
-}
-
 func (m *redisMeta) lockEviction(ctx Context) error {
 	return m.txn(ctx, func(tx *redis.Tx) error {
 		owner, err := tx.Get(ctx, m.evictingKey()).Uint64()
@@ -390,13 +385,113 @@ func (m *redisMeta) unlockEviction(ctx Context) {
 	}, m.evictingKey())
 }
 
-func (m *redisMeta) onlySession(ctx context.Context, c redis.Cmdable) error {
-	if n, err := c.ZCard(ctx, m.allSessions()).Result(); err != nil {
-		return err
-	} else if n != 1 {
-		return fmt.Errorf("%d sessions are alive, stop all other clients first: %w", n, syscall.EBUSY)
+func (m *redisMeta) capsuleAckKey() string {
+	return m.prefix + "capsuleAck"
+}
+
+func (m *redisMeta) doAckCapsules(ctx Context, ver int64, busy string) error {
+	v := strconv.FormatInt(ver, 10)
+	if busy != "" {
+		v += " " + busy
 	}
-	return nil
+	return m.rdb.HSet(ctx, m.capsuleAckKey(), strconv.FormatUint(m.sid, 10), v).Err()
+}
+
+func (m *redisMeta) unitOfKey(s *capsuleSet, key string) (Ino, bool) {
+	k := strings.TrimPrefix(key, m.prefix)
+	if len(k) < 2 || !strings.ContainsRune("idcxps", rune(k[0])) {
+		return 0, false
+	}
+	k = k[1:]
+	if i := strings.IndexByte(k, '_'); i > 0 && key[len(m.prefix)] == 'c' {
+		k = k[:i]
+	}
+	ino, err := strconv.ParseUint(k, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return s.unitOf(Ino(ino))
+}
+
+func (m *redisMeta) capsuleGate(ctx Context, keys []string) (func(), syscall.Errno) {
+	for i := 0; ; i++ {
+		m.capsuleSetMu.RLock()
+		s := m.capsules.Load()
+		var root Ino
+		if s != nil && len(s.roots) > 0 {
+			for _, k := range keys {
+				if r, ok := m.unitOfKey(s, k); ok {
+					root = r
+					break
+				}
+			}
+		}
+		if root == 0 {
+			return m.capsuleSetMu.RUnlock, 0
+		}
+		state := s.roots[root].State
+		m.capsuleSetMu.RUnlock()
+		if state == CapsuleCooling {
+			if i >= 600 {
+				return nil, syscall.EAGAIN
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if st := m.hydrateUnit(ctx, root); st != 0 {
+			return nil, st
+		}
+	}
+}
+
+func (m *redisMeta) capsuleVersion(ctx context.Context, c redis.Cmdable) (int64, error) {
+	v, err := c.Get(ctx, m.capsuleVerKey()).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return v, err
+}
+
+func (m *redisMeta) pendingAcks(ctx context.Context, c redis.Cmdable, ver int64) (int, error) {
+	live, err := c.ZRangeByScore(ctx, m.allSessions(), &redis.ZRangeBy{Min: strconv.FormatInt(time.Now().Unix(), 10), Max: "+inf"}).Result()
+	if err != nil {
+		return 0, err
+	}
+	acks, err := c.HGetAll(ctx, m.capsuleAckKey()).Result()
+	if err != nil {
+		return 0, err
+	}
+	pending := 0
+	for _, sid := range live {
+		if sid == strconv.FormatUint(m.sid, 10) {
+			continue
+		}
+		parts := strings.SplitN(acks[sid], " ", 2)
+		v, _ := strconv.ParseInt(parts[0], 10, 64)
+		if v < ver {
+			pending++
+		} else if len(parts) == 2 {
+			return 0, fmt.Errorf("session %s refused: %s: %w", sid, parts[1], syscall.EBUSY)
+		}
+	}
+	return pending, nil
+}
+
+func (m *redisMeta) waitAcks(ctx Context, ver int64) error {
+	deadline := time.Now().Add(capsuleAckTimeout)
+	for {
+		pending, err := m.pendingAcks(ctx, m.rdb, ver)
+		if err != nil {
+			return err
+		}
+		if pending == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d sessions did not confirm version %d: %w", pending, ver, syscall.ETIMEDOUT)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectStorage, maxInodes int64) (*CapsuleInfo, error) {
@@ -407,14 +502,19 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		return nil, err
 	}
 	defer m.unlockEviction(ctx)
-	if err := m.onlySession(ctx, m.rdb); err != nil {
-		return nil, err
-	}
 	cur, err := m.getCapsule(ctx, m.rdb, root)
 	if err != nil {
 		return nil, err
 	}
 	if cur != nil && cur.State == CapsuleCold {
+		ver, err := m.capsuleVersion(ctx, m.rdb)
+		if err != nil {
+			return nil, err
+		}
+		if err = m.waitAcks(ctx, ver); err != nil {
+			return cur, err
+		}
+		time.Sleep(capsuleDropGrace)
 		return cur, m.resumeDrop(ctx, store, cur)
 	}
 	var attr Attr
@@ -424,22 +524,30 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 	if attr.Typ != TypeDirectory {
 		return nil, syscall.ENOTDIR
 	}
+	snap, err := m.snapshotUnit(ctx, root, maxInodes)
+	if err != nil {
+		return nil, err
+	}
 	e, err := m.incrCounter("nextCapsuleEpoch", 1)
 	if err != nil {
 		return nil, err
 	}
 	epoch := uint64(e)
+	var verCmd *redis.IntCmd
 	err = m.capsuleTxn(ctx, root, func(info *CapsuleInfo) error {
 		if info != nil {
 			return fmt.Errorf("inode %d is already %s: %w", root, info.State, syscall.EEXIST)
 		}
 		return nil
 	}, func(pipe redis.Pipeliner) {
-		pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCooling, "epoch", epoch, "owner", m.sid)
+		pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCooling, "epoch", epoch, "owner", m.sid, "runs", encodeRuns(snap.runs))
+		pipe.HSet(ctx, m.capsulesKey(), root.String(), epoch)
+		verCmd = pipe.Incr(ctx, m.capsuleVerKey())
 	})
 	if err != nil {
 		return nil, err
 	}
+	ver := verCmd.Val()
 	obj := capsuleObject(root, epoch)
 	uploaded := false
 	abort := func(cause error) (*CapsuleInfo, error) {
@@ -448,7 +556,11 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 				return syscall.ESTALE
 			}
 			return nil
-		}, func(pipe redis.Pipeliner) { pipe.Del(ctx, m.capsuleKey(root)) })
+		}, func(pipe redis.Pipeliner) {
+			pipe.Del(ctx, m.capsuleKey(root))
+			pipe.HDel(ctx, m.capsulesKey(), root.String())
+			pipe.Incr(ctx, m.capsuleVerKey())
+		})
 		if err == nil && uploaded {
 			if err = store.Delete(ctx, obj); err != nil {
 				logger.Warnf("Delete capsule %s: %s", obj, err)
@@ -456,9 +568,33 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		}
 		return nil, cause
 	}
-	snap, err := m.snapshotUnit(ctx, root, maxInodes)
-	if err != nil {
-		return abort(err)
+	cooling := func(info *CapsuleInfo) error {
+		if info == nil || info.State != CapsuleCooling || info.Epoch != epoch {
+			return fmt.Errorf("capsule of inode %d changed during eviction: %w", root, syscall.ESTALE)
+		}
+		return nil
+	}
+	for i := 0; ; i++ {
+		if err = m.waitAcks(ctx, ver); err != nil {
+			return abort(err)
+		}
+		runs := snap.runs
+		if snap, err = m.snapshotUnit(ctx, root, maxInodes); err != nil {
+			return abort(err)
+		}
+		if slices.Equal(runs, snap.runs) {
+			break
+		}
+		if i >= 3 {
+			return abort(fmt.Errorf("unit %d keeps changing: %w", root, syscall.EAGAIN))
+		}
+		if err = m.capsuleTxn(ctx, root, cooling, func(pipe redis.Pipeliner) {
+			pipe.HSet(ctx, m.capsuleKey(root), "runs", encodeRuns(snap.runs))
+			verCmd = pipe.Incr(ctx, m.capsuleVerKey())
+		}); err != nil {
+			return abort(err)
+		}
+		ver = verCmd.Val()
 	}
 	data, sum := encodeCapsule(root, epoch, snap.recs)
 	uploaded = true
@@ -478,26 +614,33 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		if err != nil {
 			return err
 		}
-		if cur == nil || cur.State != CapsuleCooling || cur.Epoch != epoch {
-			return fmt.Errorf("capsule of inode %d changed during eviction: %w", root, syscall.ESTALE)
-		}
-		if err = m.onlySession(ctx, tx); err != nil {
+		if err = cooling(cur); err != nil {
 			return err
+		}
+		if pending, err := m.pendingAcks(ctx, tx, ver); err != nil {
+			return err
+		} else if pending > 0 {
+			return fmt.Errorf("%d sessions did not confirm version %d: %w", pending, ver, syscall.EAGAIN)
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCold, "object", obj, "sum", sum, "size", info.Size,
 				"records", info.Records, "inodes", info.Inodes, "keys", info.Keys, "runs", encodeRuns(snap.runs),
 				"files", snap.summary.Files, "dirs", snap.summary.Dirs, "space", snap.summary.Size, "length", snap.summary.Length)
-			pipe.HSet(ctx, m.capsulesKey(), root.String(), epoch)
-			pipe.Incr(ctx, m.capsuleVerKey())
+			verCmd = pipe.Incr(ctx, m.capsuleVerKey())
 			return nil
 		})
 		return err
-	}, m.capsuleKey(root), m.allSessions())
+	}, m.capsuleKey(root), m.allSessions(), m.capsuleAckKey())
 	if err != nil {
 		return abort(err)
 	}
-	if err = m.dropUnitKeys(ctx, root, epoch, snap); err != nil {
+	if err = m.waitAcks(ctx, verCmd.Val()); err != nil {
+		return info, fmt.Errorf("capsule committed, hot keys are kept until all sessions confirm, run evict again: %w", err)
+	}
+	time.Sleep(capsuleDropGrace)
+	if err = m.dropUnitKeys(ctx, root, epoch, snap); errors.Is(err, syscall.ESTALE) {
+		return nil, fmt.Errorf("inode %d was used again and loaded back during eviction: %w", root, syscall.EAGAIN)
+	} else if err != nil {
 		return info, fmt.Errorf("capsule committed, cleanup of hot keys failed, run evict again: %w", err)
 	}
 	return info, nil
@@ -597,7 +740,11 @@ func (m *redisMeta) doHydrateCapsule(ctx Context, root Ino, store object.ObjectS
 				return syscall.ESTALE
 			}
 			return nil
-		}, func(pipe redis.Pipeliner) { pipe.Del(ctx, m.capsuleKey(root)) })
+		}, func(pipe redis.Pipeliner) {
+			pipe.Del(ctx, m.capsuleKey(root))
+			pipe.HDel(ctx, m.capsulesKey(), root.String())
+			pipe.Incr(ctx, m.capsuleVerKey())
+		})
 		if err == nil {
 			_ = store.Delete(ctx, capsuleObject(root, info.Epoch))
 		}

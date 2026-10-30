@@ -18,6 +18,8 @@ import (
 )
 
 func capsuleTestMeta(t *testing.T) (*redisMeta, object.ObjectStorage, string) {
+	capsuleAckTimeout = 3 * time.Second
+	capsuleDropGrace = 100 * time.Millisecond
 	addr := os.Getenv("CAPSULE_REDIS")
 	if addr == "" {
 		addr = "127.0.0.1:6379/11"
@@ -225,7 +227,7 @@ func TestRedisCapsuleEvictHydrate(t *testing.T) {
 		t.Fatalf("evict info: %+v", info)
 	}
 	keysCold, _ := m.rdb.DBSize(ctx).Result()
-	if keysBefore-keysCold != info.Keys-4 {
+	if d := keysBefore - keysCold; d < info.Keys-5 || d > info.Keys-4 {
 		t.Fatalf("keys before %d, cold %d, removed %d", keysBefore, keysCold, info.Keys)
 	}
 	cold := capsuleRawDump(t, m)
@@ -318,10 +320,23 @@ func TestRedisCapsuleRejects(t *testing.T) {
 	if err = m2.NewSession(true); err != nil {
 		t.Fatalf("new session: %s", err)
 	}
-	if _, err = m.EvictMetadata(ctx, proj, store, 0); !errors.Is(err, syscall.EBUSY) {
-		t.Fatalf("other session alive: %v", err)
+	var f00 Ino
+	if st := m2.Lookup(ctx, a, "f00", &f00, &attr, false); st != 0 {
+		t.Fatalf("lookup: %s", st)
 	}
+	if st := m2.Open(ctx, f00, syscall.O_RDONLY, &attr); st != 0 {
+		t.Fatalf("open: %s", st)
+	}
+	if _, err = m.EvictMetadata(ctx, proj, store, 0); !errors.Is(err, syscall.EBUSY) {
+		t.Fatalf("file open in another session: %v", err)
+	}
+	m2.Close(ctx, f00)
 	_ = m2.CloseSession()
+	m.rdb.ZAdd(context.Background(), m.allSessions(), redis.Z{Score: float64(time.Now().Add(time.Minute).Unix()), Member: "434343"})
+	if _, err = m.EvictMetadata(ctx, proj, store, 0); !errors.Is(err, syscall.ETIMEDOUT) {
+		t.Fatalf("session that never confirms: %v", err)
+	}
+	m.rdb.ZRem(context.Background(), m.allSessions(), "434343")
 
 	info, err := m.EvictMetadata(ctx, proj, store, 0)
 	if err != nil {
@@ -582,12 +597,13 @@ func TestRedisCapsuleConcurrency(t *testing.T) {
 	hook.onPut = func() {
 		late := client(false)
 		lateErr = late.NewSession(true)
+		t.Cleanup(func() { _ = late.CloseSession() })
 		m.rdb.ZAdd(bctx, m.allSessions(), redis.Z{Score: float64(time.Now().Add(time.Minute).Unix()), Member: "424242"})
 	}
-	if _, err := m.EvictMetadata(ctx, proj, hook, 0); !errors.Is(err, syscall.EBUSY) {
+	if _, err := m.EvictMetadata(ctx, proj, hook, 0); !errors.Is(err, syscall.EAGAIN) {
 		t.Fatalf("eviction with a session that appeared before commit: %v", err)
 	}
-	if !errors.Is(lateErr, syscall.EBUSY) {
+	if lateErr != nil {
 		t.Fatalf("mount during eviction: %v", lateErr)
 	}
 	m.rdb.ZRem(bctx, m.allSessions(), "424242")
@@ -697,4 +713,83 @@ func osListAll(store object.ObjectStorage) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+func TestRedisCapsuleOnline(t *testing.T) {
+	m, store, addr := capsuleTestMeta(t)
+	ctx := Background()
+	proj, _ := capsuleTree(t, m)
+	b, err := newRedisMeta("redis", addr, testConfig())
+	if err != nil {
+		t.Fatalf("create meta: %s", err)
+	}
+	if _, err = b.Load(true); err != nil {
+		t.Fatalf("load: %s", err)
+	}
+	b.SetCapsuleStorage(store)
+	if err = b.NewSession(true); err != nil {
+		t.Fatalf("new session: %s", err)
+	}
+	defer b.CloseSession()
+	var a Ino
+	var attr Attr
+	if st := b.Lookup(ctx, proj, "a", &a, &attr, false); st != 0 {
+		t.Fatalf("lookup: %s", st)
+	}
+	stop := make(chan struct{})
+	done := make(chan []string)
+	go func() {
+		var created []string
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				done <- created
+				return
+			default:
+			}
+			name := fmt.Sprintf("live%04d", i)
+			var ino Ino
+			var at Attr
+			if st := b.Create(ctx, a, name, 0644, 0, 0, &ino, &at); st != 0 {
+				t.Errorf("create %s during eviction: %s", name, st)
+				done <- created
+				return
+			}
+			b.Close(ctx, ino)
+			created = append(created, name)
+			var entries []*Entry
+			if st := b.Readdir(ctx, a, 0, &entries); st != 0 || len(entries) < len(created)+22 {
+				t.Errorf("readdir during eviction: %s, %d entries for %d created", st, len(entries), len(created))
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	if _, err = m.EvictMetadata(ctx, proj, store, 0); err != nil && !errors.Is(err, syscall.EAGAIN) {
+		t.Fatalf("online evict with a busy writer: %s", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	close(stop)
+	created := <-done
+	info, err := m.EvictMetadata(ctx, proj, store, 0)
+	if err != nil {
+		t.Fatalf("online evict of an idle unit: %s", err)
+	}
+	if infos, _ := m.ListCapsules(ctx); len(infos) != 1 || infos[0].State != CapsuleCold {
+		t.Fatalf("unit is not cold: %v", infos)
+	}
+	var entries []*Entry
+	if st := b.Readdir(ctx, a, 0, &entries); st != 0 || len(entries) != len(created)+24 {
+		t.Fatalf("readdir from the other session after online eviction: %s %d", st, len(entries))
+	}
+	if len(created) == 0 {
+		t.Fatalf("writer made no progress")
+	}
+	for _, name := range created {
+		var ino Ino
+		if st := b.Lookup(ctx, a, name, &ino, &attr, false); st != 0 {
+			t.Fatalf("file %s created during eviction is lost: %s", name, st)
+		}
+	}
+	t.Logf("capsule %+v, %d files created by the other client during eviction", info.Inodes, len(created))
 }

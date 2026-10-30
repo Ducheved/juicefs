@@ -1167,6 +1167,11 @@ func (m *redisMeta) txn(ctx Context, txf func(tx *redis.Tx) error, keys ...strin
 			panic(fmt.Sprintf("Invalid key %s not starts with prefix %s", k, m.prefix))
 		}
 	}
+	release, st := m.capsuleGate(ctx, keys)
+	if st != 0 {
+		return st
+	}
+	defer release()
 	var khash = fnv.New32()
 	_, _ = khash.Write([]byte(keys[0]))
 	h := uint(khash.Sum32())
