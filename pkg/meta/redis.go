@@ -1483,8 +1483,8 @@ func (m *redisMeta) doMknod(ctx Context, parent Ino, name string, _type uint8, m
 		}
 		m.parseAttr(a, &pattr)
 		ihGid := m.inheritGid(ctx, _type, pattr.Gid, pattr.Mode)
-		if m.checkGroupQuota(ctx, uint64(ihGid), align4K(0), 1) {
-			return syscall.EDQUOT
+		if st := m.checkGroupQuota(ctx, uint64(ihGid), align4K(0), 1); st != 0 {
+			return st
 		}
 		if pattr.Typ != TypeDirectory {
 			return syscall.ENOTDIR
@@ -4666,8 +4666,8 @@ func (m *redisMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quo
 		quotas  map[uint64]*Quota
 	}{
 		{format.DirStats && (scope.allDirs || len(scope.dirs) > 0), DirQuotaType, "dir", dirQuotas},
-		{format.UserGroupQuota && scope.userGroup, UserQuotaType, "user", userQuotas},
-		{format.UserGroupQuota && scope.userGroup, GroupQuotaType, "group", groupQuotas},
+		{format.UserGroupQuota && (scope.userGroup || len(scope.users) > 0), UserQuotaType, "user", userQuotas},
+		{format.UserGroupQuota && (scope.userGroup || len(scope.groups) > 0), GroupQuotaType, "group", groupQuotas},
 	}
 
 	for _, qt := range quotaTypes {
@@ -4681,8 +4681,17 @@ func (m *redisMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quo
 		}
 
 		var usedInodesMap, usedSpaceMap, quotaMap map[string]string
-		if qt.qtype == DirQuotaType && !scope.allDirs {
-			usedInodesMap, usedSpaceMap, quotaMap, err = m.hmgetQuotas(ctx, config, scope.dirs)
+		var ids []uint64
+		switch {
+		case qt.qtype == DirQuotaType && !scope.allDirs:
+			ids = scope.dirs
+		case qt.qtype == UserQuotaType && !scope.userGroup:
+			ids = scope.users
+		case qt.qtype == GroupQuotaType && !scope.userGroup:
+			ids = scope.groups
+		}
+		if ids != nil {
+			usedInodesMap, usedSpaceMap, quotaMap, err = m.hmgetQuotas(ctx, config, ids)
 			if err != nil {
 				return nil, nil, nil, err
 			}

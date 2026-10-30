@@ -327,6 +327,7 @@ type baseMeta struct {
 	dirQuotas       map[uint64]*Quota // directory inode -> quota
 	noDirQuotas     map[uint64]*int64
 	noDirQuota      atomic.Bool
+	quotaFlushGen   atomic.Int64
 	userQuotas      map[uint64]*Quota // uid -> quota
 	groupQuotas     map[uint64]*Quota // gid -> quota
 
@@ -1802,11 +1803,8 @@ func (m *baseMeta) Link(ctx Context, inode, parent Ino, name string, attr *Attr)
 		return syscall.EPERM
 	}
 
-	if m.checkUserQuota(ctx, uint64(attr.Uid), 0, 1) {
-		return syscall.EDQUOT
-	}
-	if m.checkGroupQuota(ctx, uint64(attr.Gid), 0, 1) {
-		return syscall.EDQUOT
+	if st := m.checkUserGroupQuota(ctx, uint64(attr.Uid), uint64(attr.Gid), 0, 1); st != 0 {
+		return st
 	}
 	if st := m.checkDirQuota(ctx, parent, align4K(attr.Length), 1); st != 0 {
 		return st

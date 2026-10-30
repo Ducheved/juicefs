@@ -18,6 +18,7 @@ package meta
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -49,6 +50,7 @@ type Quota struct {
 	UsedSpace, UsedInodes int64
 	newSpace, newInodes   int64
 	touched               int64
+	flushed               int64
 	unresolved            bool
 }
 
@@ -56,6 +58,8 @@ type quotaScope struct {
 	allDirs   bool
 	dirs      []uint64
 	userGroup bool
+	users     []uint64
+	groups    []uint64
 }
 
 type dirParent struct {
@@ -312,11 +316,8 @@ func (m *baseMeta) checkQuota(ctx Context, space, inodes int64, uid, gid uint32,
 	if space <= 0 && inodes <= 0 {
 		return 0
 	}
-	if m.checkUserQuota(ctx, uint64(uid), space, inodes) {
-		return syscall.EDQUOT
-	}
-	if m.checkGroupQuota(ctx, uint64(gid), space, inodes) {
-		return syscall.EDQUOT
+	if st := m.checkUserGroupQuota(ctx, uint64(uid), uint64(gid), space, inodes); st != 0 {
+		return st
 	}
 
 	format := m.getFormat()
@@ -356,22 +357,176 @@ func (m *baseMeta) loadQuotas() {
 
 func (m *baseMeta) refreshQuotas() bool {
 	m.quotasFlushLock.Lock()
-	defer m.quotasFlushLock.Unlock()
-
 	positive, negative := m.cachedDirQuotas()
-	dirs := append(append([]uint64{}, positive...), negative...)
-	dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(Background(), quotaScope{dirs: dirs, userGroup: true})
-	if err != nil {
-		logger.Warnf("Load quotas: %s", err)
+	scope := quotaScope{dirs: append(append([]uint64{}, positive...), negative...)}
+	if m.getFormat().UserGroupQuota {
+		scope.users = m.cachedUserGroupQuotas(UserQuotaType)
+		scope.groups = m.cachedUserGroupQuotas(GroupQuotaType)
+	}
+	m.quotasFlushLock.Unlock()
+	for i := 0; ; i++ {
+		gen := m.quotaFlushGen.Load()
+		dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(Background(), scope)
+		if err != nil {
+			logger.Warnf("Load quotas: %s", err)
+			return false
+		}
+		m.quotasFlushLock.Lock()
+		m.quotaMu.Lock()
+		var stale quotaScope
+		stale.dirs = m.syncDirQuotas(positive, negative, dirQuotas, gen)
+		stale.users = syncUserGroupQuotas(m.userQuotas, scope.users, userQuotas, gen)
+		stale.groups = syncUserGroupQuotas(m.groupQuotas, scope.groups, groupQuotas, gen)
+		m.quotaMu.Unlock()
+		m.quotasFlushLock.Unlock()
+		if i == 2 || len(stale.dirs)+len(stale.users)+len(stale.groups) == 0 {
+			return true
+		}
+		scope, positive, negative = stale, stale.dirs, nil
+	}
+}
+
+func syncQuota(existing, loaded *Quota, gen int64) bool {
+	atomic.SwapInt64(&existing.MaxSpace, loaded.MaxSpace)
+	atomic.SwapInt64(&existing.MaxInodes, loaded.MaxInodes)
+	if atomic.LoadInt64(&existing.flushed) > gen {
 		return false
 	}
+	atomic.SwapInt64(&existing.UsedSpace, loaded.UsedSpace)
+	atomic.SwapInt64(&existing.UsedInodes, loaded.UsedInodes)
+	return true
+}
+
+func (m *baseMeta) ugQuotas(qtype uint32) map[uint64]*Quota {
+	if qtype == GroupQuotaType {
+		return m.groupQuotas
+	}
+	return m.userQuotas
+}
+
+func (m *baseMeta) cachedUserGroupQuotas(qtype uint32) []uint64 {
+	idle := time.Now().Add(-quotaCacheIdle).UnixNano()
 	m.quotaMu.Lock()
 	defer m.quotaMu.Unlock()
+	quotas := m.ugQuotas(qtype)
+	touched := make([]int64, 0, len(quotas))
+	for _, q := range quotas {
+		touched = append(touched, atomic.LoadInt64(&q.touched))
+	}
+	threshold := evictThreshold(touched, idle)
+	ids := make([]uint64, 0, len(quotas))
+	for id, q := range quotas {
+		if atomic.LoadInt64(&q.touched) < threshold && atomic.LoadInt64(&q.newSpace) == 0 && atomic.LoadInt64(&q.newInodes) == 0 {
+			delete(quotas, id)
+		} else {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
 
-	m.syncDirQuotas(positive, negative, dirQuotas)
-	m.syncQuotaMaps(m.userQuotas, userQuotas, "user")
-	m.syncQuotaMaps(m.groupQuotas, groupQuotas, "group")
-	return true
+func syncUserGroupQuotas(existing map[uint64]*Quota, ids []uint64, loaded map[uint64]*Quota, gen int64) (stale []uint64) {
+	for _, id := range ids {
+		q := existing[id]
+		if q == nil {
+			continue
+		}
+		l := loaded[id]
+		if l == nil {
+			l = &Quota{MaxSpace: -1, MaxInodes: -1}
+		}
+		if syncQuota(q, l, gen) {
+			q.unresolved = false
+		} else {
+			stale = append(stale, id)
+		}
+	}
+	return
+}
+
+func (m *baseMeta) missingUserGroupQuotas(scope quotaScope) (missing quotaScope) {
+	m.quotaMu.RLock()
+	defer m.quotaMu.RUnlock()
+	for _, id := range scope.users {
+		if q := m.userQuotas[id]; q == nil || q.unresolved {
+			missing.users = append(missing.users, id)
+		}
+	}
+	for _, id := range scope.groups {
+		if q := m.groupQuotas[id]; q == nil || q.unresolved {
+			missing.groups = append(missing.groups, id)
+		}
+	}
+	return
+}
+
+func (m *baseMeta) fetchUserGroupQuotas(scope quotaScope) {
+	var err error
+	for i := 0; i < 3; i++ {
+		gen := m.quotaFlushGen.Load()
+		var users, groups map[uint64]*Quota
+		if _, users, groups, err = m.en.doLoadQuotas(Background(), scope); err != nil {
+			time.Sleep(time.Duration(10<<i) * time.Millisecond)
+			continue
+		}
+		if i == 2 {
+			gen = math.MaxInt64
+		}
+		if scope = m.applyUserGroupQuotas(scope, users, groups, gen); len(scope.users)+len(scope.groups) == 0 {
+			return
+		}
+	}
+	if err == nil {
+		return
+	}
+	logger.Warnf("Load quotas of users %v groups %v: %s", scope.users, scope.groups, err)
+	now := time.Now().UnixNano()
+	m.quotaMu.Lock()
+	defer m.quotaMu.Unlock()
+	for qtype, ids := range map[uint32][]uint64{UserQuotaType: scope.users, GroupQuotaType: scope.groups} {
+		quotas := m.ugQuotas(qtype)
+		for _, id := range ids {
+			if quotas[id] == nil {
+				quotas[id] = &Quota{MaxSpace: -1, MaxInodes: -1, touched: now, unresolved: true}
+			}
+		}
+	}
+}
+
+func (m *baseMeta) applyUserGroupQuotas(scope quotaScope, users, groups map[uint64]*Quota, gen int64) (stale quotaScope) {
+	now := time.Now().UnixNano()
+	m.quotaMu.Lock()
+	defer m.quotaMu.Unlock()
+	for _, t := range []struct {
+		qtype  uint32
+		ids    []uint64
+		loaded map[uint64]*Quota
+		stale  *[]uint64
+	}{{UserQuotaType, scope.users, users, &stale.users}, {GroupQuotaType, scope.groups, groups, &stale.groups}} {
+		quotas := m.ugQuotas(t.qtype)
+		for _, id := range t.ids {
+			l := t.loaded[id]
+			if l == nil {
+				l = &Quota{MaxSpace: -1, MaxInodes: -1}
+			}
+			q := quotas[id]
+			if q == nil {
+				l.touched = now
+				quotas[id] = l
+				continue
+			}
+			atomic.StoreInt64(&q.touched, now)
+			if !q.unresolved {
+				continue
+			}
+			if syncQuota(q, l, gen) {
+				q.unresolved = false
+			} else {
+				*t.stale = append(*t.stale, id)
+			}
+		}
+	}
+	return
 }
 
 func evictThreshold(touched []int64, idle int64) int64 {
@@ -415,17 +570,16 @@ func (m *baseMeta) cachedDirQuotas() (positive, negative []uint64) {
 	return
 }
 
-func (m *baseMeta) syncDirQuotas(positive, negative []uint64, loaded map[uint64]*Quota) {
+func (m *baseMeta) syncDirQuotas(positive, negative []uint64, loaded map[uint64]*Quota, gen int64) (stale []uint64) {
 	for _, ino := range positive {
 		existing := m.dirQuotas[ino]
 		if existing == nil {
 			continue
 		}
 		if q, found := loaded[ino]; found {
-			atomic.SwapInt64(&existing.MaxSpace, q.MaxSpace)
-			atomic.SwapInt64(&existing.MaxInodes, q.MaxInodes)
-			atomic.SwapInt64(&existing.UsedSpace, q.UsedSpace)
-			atomic.SwapInt64(&existing.UsedInodes, q.UsedInodes)
+			if !syncQuota(existing, q, gen) {
+				stale = append(stale, ino)
+			}
 			existing.unresolved = false
 			continue
 		}
@@ -452,6 +606,7 @@ func (m *baseMeta) syncDirQuotas(positive, negative []uint64, loaded map[uint64]
 		logger.Infof("Quota for inode %d is loaded", ino)
 		m.dirQuotas[ino] = q
 	}
+	return
 }
 
 func (m *baseMeta) fetchDirQuotas(inodes []uint64) {
@@ -481,21 +636,6 @@ func (m *baseMeta) fetchDirQuotas(inodes []uint64) {
 		} else {
 			t := now
 			m.noDirQuotas[ino] = &t
-		}
-	}
-}
-
-func (m *baseMeta) syncQuotaMaps(existing map[uint64]*Quota, loaded map[uint64]*Quota, quotaType string) {
-	// add new or update existing
-	for key, q := range loaded {
-		logger.Debugf("Load quotas got %s %d -> %+v", quotaType, key, q)
-		if quota, ok := existing[key]; ok {
-			atomic.SwapInt64(&quota.MaxSpace, q.MaxSpace)
-			atomic.SwapInt64(&quota.MaxInodes, q.MaxInodes)
-			atomic.SwapInt64(&quota.UsedSpace, q.UsedSpace)
-			atomic.SwapInt64(&quota.UsedInodes, q.UsedInodes)
-		} else {
-			existing[key] = q
 		}
 	}
 }
@@ -670,36 +810,37 @@ func (m *baseMeta) checkDirQuota(ctx Context, inode Ino, space, inodes int64) sy
 	return 0
 }
 
-func (m *baseMeta) checkUserQuota(ctx Context, uid uint64, space, inodes int64) bool {
-	if !m.getFormat().UserGroupQuota {
-		return false
+func (m *baseMeta) checkUserGroupQuotas(scope quotaScope, space, inodes int64) syscall.Errno {
+	if !m.getFormat().UserGroupQuota || (space <= 0 && inodes <= 0) {
+		return 0
 	}
-
-	var q *Quota
+	if missing := m.missingUserGroupQuotas(scope); len(missing.users)+len(missing.groups) > 0 {
+		m.fetchUserGroupQuotas(missing)
+	}
+	now := time.Now().UnixNano()
 	m.quotaMu.RLock()
-	q, ok := m.userQuotas[uid]
-	m.quotaMu.RUnlock()
-
-	if !ok {
-		return false
+	defer m.quotaMu.RUnlock()
+	for qtype, ids := range map[uint32][]uint64{UserQuotaType: scope.users, GroupQuotaType: scope.groups} {
+		for _, id := range ids {
+			q := m.ugQuotas(qtype)[id]
+			if q == nil || q.unresolved {
+				return syscall.EIO
+			}
+			atomic.StoreInt64(&q.touched, now)
+			if q.check(space, inodes) {
+				return syscall.EDQUOT
+			}
+		}
 	}
-	return q.check(space, inodes)
+	return 0
 }
 
-func (m *baseMeta) checkGroupQuota(ctx Context, gid uint64, space, inodes int64) bool {
-	if !m.getFormat().UserGroupQuota {
-		return false
-	}
+func (m *baseMeta) checkUserGroupQuota(ctx Context, uid, gid uint64, space, inodes int64) syscall.Errno {
+	return m.checkUserGroupQuotas(quotaScope{users: []uint64{uid}, groups: []uint64{gid}}, space, inodes)
+}
 
-	var q *Quota
-	m.quotaMu.RLock()
-	q, ok := m.groupQuotas[gid]
-	m.quotaMu.RUnlock()
-
-	if !ok {
-		return false
-	}
-	return q.check(space, inodes)
+func (m *baseMeta) checkGroupQuota(ctx Context, gid uint64, space, inodes int64) syscall.Errno {
+	return m.checkUserGroupQuotas(quotaScope{groups: []uint64{gid}}, space, inodes)
 }
 
 func (m *baseMeta) updateDirQuota(ctx Context, inode Ino, space, inodes int64) {
@@ -715,29 +856,24 @@ func (m *baseMeta) updateUserGroupStat(ctx Context, uid, gid uint32, space, inod
 	if space == 0 && inodes == 0 {
 		return
 	}
+	now := time.Now().UnixNano()
 	m.quotaMu.Lock()
-	if uq := m.userQuotas[uint64(uid)]; uq != nil {
-		uq.update(space, inodes)
-	} else {
-		m.userQuotas[uint64(uid)] = &Quota{
-			UsedSpace:  0,
-			UsedInodes: 0,
-			MaxSpace:   -1, // No limit
-			MaxInodes:  -1,
-			newSpace:   space,
-			newInodes:  inodes,
-		}
-	}
-	if gq := m.groupQuotas[uint64(gid)]; gq != nil {
-		gq.update(space, inodes)
-	} else {
-		m.groupQuotas[uint64(gid)] = &Quota{
-			UsedSpace:  0,
-			UsedInodes: 0,
-			MaxSpace:   -1, // No limit
-			MaxInodes:  -1,
-			newSpace:   space,
-			newInodes:  inodes,
+	for _, t := range []struct {
+		quotas map[uint64]*Quota
+		id     uint64
+	}{{m.userQuotas, uint64(uid)}, {m.groupQuotas, uint64(gid)}} {
+		if q := t.quotas[t.id]; q != nil {
+			q.update(space, inodes)
+			atomic.StoreInt64(&q.touched, now)
+		} else {
+			t.quotas[t.id] = &Quota{
+				MaxSpace:   -1,
+				MaxInodes:  -1,
+				newSpace:   space,
+				newInodes:  inodes,
+				touched:    now,
+				unresolved: true,
+			}
 		}
 	}
 	m.quotaMu.Unlock()
@@ -760,7 +896,7 @@ func (m *baseMeta) flushQuotas(ctx Context) {
 func (m *baseMeta) collectQuotas(qtype uint32, quotas map[uint64]*Quota) []*iQuota {
 	var result []*iQuota
 	for key, q := range quotas {
-		if q.unresolved {
+		if q.unresolved && qtype == DirQuotaType {
 			continue
 		}
 		newSpace := atomic.LoadInt64(&q.newSpace)
@@ -805,6 +941,7 @@ func (m *baseMeta) doFlushQuotas() {
 		return
 	}
 	m.quotaMu.Lock()
+	gen := m.quotaFlushGen.Add(1)
 	for _, snap := range allQuotas {
 		var q *Quota
 		switch snap.qtype {
@@ -817,6 +954,7 @@ func (m *baseMeta) doFlushQuotas() {
 		}
 		if q != nil {
 			m.updateQuota(q, snap.quota.newSpace, snap.quota.newInodes)
+			atomic.StoreInt64(&q.flushed, gen)
 		}
 	}
 	m.quotaMu.Unlock()

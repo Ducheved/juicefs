@@ -29,10 +29,12 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -125,6 +127,18 @@ func TestRedisDirQuotaRefresh(t *testing.T) {
 
 func TestRedisDirQuotaRefreshFaults(t *testing.T) {
 	testDirQuotaRefreshFaults(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newRedisMeta("redis", "127.0.0.1:6379/10", conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		return m
+	})
+}
+
+func TestRedisUserGroupQuotaRefresh(t *testing.T) {
+	testUserGroupQuotaRefresh(t, func() Meta {
 		conf := testConfig()
 		conf.Heartbeat = 100 * time.Millisecond
 		m, err := newRedisMeta("redis", "127.0.0.1:6379/10", conf)
@@ -5151,17 +5165,32 @@ type quotaFaultEngine struct {
 	engine
 	failLoad  bool
 	loads     int
+	scopes    []quotaScope
 	onGetAttr func(Ino)
+	onLoad    func(quotaScope)
+	onFlush   func()
+}
+
+func (e *quotaFaultEngine) doFlushQuotas(ctx Context, quotas []*iQuota) error {
+	if e.onFlush != nil {
+		e.onFlush()
+	}
+	return e.engine.doFlushQuotas(ctx, quotas)
 }
 
 func (e *quotaFaultEngine) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
 	if len(scope.dirs) > 0 {
 		e.loads++
 	}
+	e.scopes = append(e.scopes, scope)
 	if e.failLoad {
 		return nil, nil, nil, syscall.EIO
 	}
-	return e.engine.doLoadQuotas(ctx, scope)
+	d, u, g, err := e.engine.doLoadQuotas(ctx, scope)
+	if e.onLoad != nil {
+		e.onLoad(scope)
+	}
+	return d, u, g, err
 }
 
 func (e *quotaFaultEngine) doGetAttr(ctx Context, inode Ino, attr *Attr) syscall.Errno {
@@ -5245,6 +5274,189 @@ func testDirQuotaRefreshFaults(t *testing.T, newClient func() Meta) {
 	fault.onGetAttr = nil
 	if p, _ := base.getDirParent(ctx, x); p != y {
 		t.Fatalf("refresh overwrote a newer parent: %d", p)
+	}
+}
+
+func testUserGroupQuotaRefresh(t *testing.T, newClient func() Meta) {
+	m1, m2 := newClient(), newClient()
+	if err := m1.Reset(); err != nil {
+		t.Fatalf("reset meta: %s", err)
+	}
+	format := testFormat()
+	format.UserGroupQuota = true
+	if err := m1.Init(format, false); err != nil {
+		t.Fatalf("init meta: %s", err)
+	}
+	if _, err := m2.Load(true); err != nil {
+		t.Fatalf("load meta: %s", err)
+	}
+	ctx := Background()
+	base := m1.getBase()
+	base.loadQuotas()
+	fault := &quotaFaultEngine{engine: base.en}
+	base.en = fault
+	var dir Ino
+	var attr Attr
+	if st := m1.Mkdir(ctx, RootInode, "ug", 0777, 0, 0, &dir, &attr); st != 0 {
+		t.Fatalf("mkdir: %s", st)
+	}
+	create := func(m Meta, uid uint32, name string) syscall.Errno {
+		var ino Ino
+		var attr Attr
+		uctx := NewContext(1, uid, []uint32{uid})
+		st := m.Create(uctx, dir, name, 0644, 0, 0, &ino, &attr)
+		if st == 0 {
+			m.Close(uctx, ino)
+		}
+		return st
+	}
+	usage := func(uid uint32) int64 {
+		key := fmt.Sprint(uid)
+		qs := make(map[string]*Quota)
+		if err := m2.HandleQuota(ctx, QuotaGet, key, UserQuotaType, qs, false, false, false); err != nil || qs[key] == nil {
+			t.Fatalf("get quota of %d: %v", uid, err)
+		}
+		return qs[key].UsedInodes
+	}
+	if err := m2.HandleQuota(ctx, QuotaSet, "2001", UserQuotaType, map[string]*Quota{"2001": {MaxSpace: 1 << 30, MaxInodes: 2}}, false, false, false); err != nil {
+		t.Fatalf("set quota: %s", err)
+	}
+	for i := 0; i < 2; i++ {
+		if st := create(m1, 2001, fmt.Sprintf("a%d", i)); st != 0 {
+			t.Fatalf("create %d: %s", i, st)
+		}
+	}
+	if st := create(m1, 2001, "a2"); st != syscall.EDQUOT {
+		t.Fatalf("quota set by another client is not enforced before refresh: %s", st)
+	}
+
+	for i := 0; i < 50; i++ {
+		if st := create(m2, uint32(3000+i), fmt.Sprintf("b%d", i)); st != 0 {
+			t.Fatalf("create: %s", st)
+		}
+	}
+	m2.getBase().doFlushQuotas()
+	base.doFlushQuotas()
+	fault.scopes = nil
+	base.loadQuotas()
+	for _, s := range fault.scopes {
+		if s.userGroup || slices.ContainsFunc(s.users, func(u uint64) bool { return u >= 3000 }) {
+			t.Fatalf("refresh loads quotas this client never used: %+v", s)
+		}
+	}
+	if usage(2001) != 2 || base.userQuotas[2001].UsedInodes != 2 {
+		t.Fatalf("usage of 2001: %d local %d", usage(2001), base.userQuotas[2001].UsedInodes)
+	}
+
+	base.doFlushQuotas()
+	base.quotaMu.Lock()
+	for _, q := range base.userQuotas {
+		q.touched = time.Now().Add(-2 * quotaCacheIdle).UnixNano()
+	}
+	base.quotaMu.Unlock()
+	base.loadQuotas()
+	if n := len(base.userQuotas); n != 0 {
+		t.Fatalf("idle user quotas are kept: %d", n)
+	}
+
+	fault.failLoad = true
+	if st := create(m1, 4001, "c0"); st != syscall.EIO {
+		t.Fatalf("create with unknown user quota: %s", st)
+	}
+	fault.failLoad = false
+	if st := create(m1, 4001, "c1"); st != 0 {
+		t.Fatalf("create after recovery: %s", st)
+	}
+
+	if err := m2.HandleQuota(ctx, QuotaSet, "6001", UserQuotaType, map[string]*Quota{"6001": {MaxSpace: 1 << 30, MaxInodes: 1}}, false, false, false); err != nil {
+		t.Fatalf("set quota: %s", err)
+	}
+	if st := create(m2, 6001, "e0"); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	m2.getBase().doFlushQuotas()
+	if st := m1.Unlink(ctx, dir, "e0"); st != 0 {
+		t.Fatalf("unlink: %s", st)
+	}
+	if st := create(m1, 6001, "e1"); st != 0 {
+		t.Fatalf("create after unlink: %s", st)
+	}
+	if st := create(m1, 6001, "e2"); st != syscall.EDQUOT {
+		t.Fatalf("quota of a user first seen by unlink is not enforced: %s", st)
+	}
+
+	for i := 0; i < 2; i++ {
+		if st := create(m1, 5001, fmt.Sprintf("d%d", i)); st != 0 {
+			t.Fatalf("create: %s", st)
+		}
+		base.doFlushQuotas()
+		base.loadQuotas()
+	}
+	if st := create(m1, 5001, "d2"); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	flushed := make(chan struct{})
+	fault.onLoad = func(s quotaScope) {
+		if len(s.users) == 0 {
+			return
+		}
+		fault.onLoad = nil
+		if st := create(m2, 5001, "d3"); st != 0 {
+			t.Fatalf("create: %s", st)
+		}
+		m2.getBase().doFlushQuotas()
+		go func() {
+			base.doFlushQuotas()
+			close(flushed)
+		}()
+		select {
+		case <-flushed:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	base.loadQuotas()
+	select {
+	case <-flushed:
+	default:
+		t.Fatalf("flush waits for the quota refresh")
+	}
+	if got := atomic.LoadInt64(&base.userQuotas[5001].UsedInodes); got != 4 || usage(5001) != 4 {
+		t.Fatalf("refresh overwrote usage flushed during the load: local %d stored %d", got, usage(5001))
+	}
+
+	var f Ino
+	if st := m1.Create(NewContext(1, 7001, []uint32{7001}), dir, "g0", 0644, 0, 0, &f, &attr); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	base.doFlushQuotas()
+	base.quotaMu.Lock()
+	delete(base.userQuotas, 7001)
+	delete(base.groupQuotas, 7001)
+	base.quotaMu.Unlock()
+	if st := create(m1, 7002, "g1"); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	started := make(chan struct{})
+	fault.onFlush = func() {
+		fault.onFlush = nil
+		close(started)
+		time.Sleep(300 * time.Millisecond)
+	}
+	go base.doFlushQuotas()
+	<-started
+	written := make(chan syscall.Errno, 1)
+	go func() {
+		var id uint64
+		_ = m1.NewSlice(ctx, &id)
+		written <- m1.Write(ctx, f, 0, 0, Slice{Id: id, Size: 1 << 20, Len: 1 << 20}, time.Now())
+	}()
+	select {
+	case st := <-written:
+		if st != 0 {
+			t.Fatalf("write: %s", st)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("write with an uncached owner hangs behind a quota flush")
 	}
 }
 
@@ -5821,8 +6033,8 @@ func TestCheckQuotaFileOwner(t *testing.T) {
 		t.Fatalf("checkQuota should pass when quota is zero (unlimited), got: %s", err)
 	}
 
-	delete(m.userQuotas, uint64(fileOwnerUid))
-	delete(m.groupQuotas, uint64(fileOwnerGid))
+	m.userQuotas[uint64(fileOwnerUid)] = &Quota{MaxSpace: -1, MaxInodes: -1}
+	m.groupQuotas[uint64(fileOwnerGid)] = &Quota{MaxSpace: -1, MaxInodes: -1}
 	if err := m.checkQuota(operatorCtx, 1024, 1, fileOwnerUid, fileOwnerGid); err != 0 {
 		t.Fatalf("checkQuota should pass when no quota limits, got: %s", err)
 	}

@@ -1902,8 +1902,8 @@ func (m *dbMeta) doMknod(ctx Context, parent Ino, name string, _type uint8, mode
 		var pattr Attr
 		m.parseAttr(&pn, &pattr)
 		ihGid := m.inheritGid(ctx, _type, pn.Gid, pn.Mode)
-		if m.checkGroupQuota(ctx, uint64(ihGid), align4K(0), 1) {
-			return syscall.EDQUOT
+		if st := m.checkGroupQuota(ctx, uint64(ihGid), align4K(0), 1); st != 0 {
+			return st
 		}
 		if pattr.Parent > TrashInode {
 			return syscall.ENOENT
@@ -4666,6 +4666,19 @@ func (m *dbMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota,
 		if format.UserGroupQuota && scope.userGroup {
 			if e := s.Find(&userGroupQuotasList); e != nil {
 				return e
+			}
+		} else if format.UserGroupQuota {
+			for _, t := range []struct {
+				qtype uint32
+				ids   []uint64
+			}{{UserQuotaType, scope.users}, {GroupQuotaType, scope.groups}} {
+				for i := 0; i < len(t.ids); i += quotaBatchSize {
+					var batch []userGroupQuota
+					if e := s.Where("qtype = ?", t.qtype).In("qkey", t.ids[i:min(i+quotaBatchSize, len(t.ids))]).Find(&batch); e != nil {
+						return e
+					}
+					userGroupQuotasList = append(userGroupQuotasList, batch...)
+				}
 			}
 		}
 		return nil
