@@ -1,9 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 . $(dirname $0)/cg2.sh
-R=$S/results/write-ceiling
-WRITERS=${WRITERS:-"1 4 16 64 256"}
+LABEL=${LABEL:-spread}
+USERS=${USERS:-8}
+DIRS=${DIRS:-64}
+FILES=${FILES:-20}
+PROCS=${PROCS:-4}
+WRITERS=${WRITERS:-"4 16 64 256"}
 SECONDS_PER_STEP=${SECONDS_PER_STEP:-30}
+R=$S/results/write-ceiling-$LABEL
+LCG=/sys/fs/cgroup/wc-load
 mkdir -p $R
 start_valkey() {
   docker rm -f -v wc-engine >/dev/null 2>&1 || true
@@ -18,20 +24,35 @@ start_kvrocks() {
     --bind 127.0.0.1 --port 6390 --dir /tmp/kvrocks --redis-databases 16 --rocksdb.write_options.sync yes \
     --rocksdb.block_cache_size 256 --workers 8 >/dev/null
 }
+echo "label=$LABEL users=$USERS dirs=$DIRS files=$FILES procs=$PROCS engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
 for engine in valkey kvrocks; do
   start_$engine
   for i in $(seq 1 120); do redis-cli -p 6390 ping 2>/dev/null | grep -q PONG && break; sleep 1; done
   redis-cli -p 6390 ping | grep -q PONG || { echo "$engine did not start"; docker logs --tail 5 wc-engine; exit 1; }
   CG=$(container_cg wc-engine)
   M="redis://127.0.0.1:6390/1?pool_size=512"
-  load $S/bin/nsgen3 -meta "$M" -random -users 2 -dirs 4 -files 500 -trash-days 0 -families=false > $R/$engine-gen.json 2> $R/$engine-gen.err
-  echo "engine=$engine engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
+  load $S/bin/nsgen3 -meta "$M" -random -users $USERS -dirs $DIRS -files $FILES -trash-days 0 -families=false > $R/$engine-gen.json 2> $R/$engine-gen.err
   for w in $WRITERS; do
+    procs=$(( w < PROCS ? w : PROCS ))
+    cg_make $LCG max
     c0=$(cg_cpu_us $CG)
-    load $S/bin/mixload -meta "$M" -random -users 2 -dirs 4 -files 500 -readers 0 -writers $w -seconds $SECONDS_PER_STEP -label $engine-w$w > $R/$engine-w$w.json 2> $R/$engine-w$w.err
+    for p in $(seq 1 $procs); do
+      cg_exec $LCG taskset -c $LOAD_CPUS $S/bin/mixload -meta "$M" -random -users $USERS -dirs $DIRS -files $FILES -readers 0 -writers $((w / procs)) -seconds $SECONDS_PER_STEP -label $engine-w$w-p$p > $R/$engine-w$w-p$p.json 2> $R/$engine-w$w-p$p.err &
+    done
+    wait
     c1=$(cg_cpu_us $CG)
-    cycles=$(python3 -c "import json,sys; print(json.load(open('$R/$engine-w$w.json'))['create']['ops'])")
-    echo "writers=$w $(cat $R/$engine-w$w.json) engine_cores=$(python3 -c "print(round(($c1-$c0)/1e6/$SECONDS_PER_STEP,2))") engine_cpu_us_per_cycle=$(( (c1 - c0) / (cycles > 0 ? cycles : 1) ))"
+    lc=$(cg_cpu_us $LCG)
+    rmdir $LCG
+    python3 - $R $engine $w $procs $SECONDS_PER_STEP $c0 $c1 $lc <<'EOF'
+import json, sys
+r, engine, w, procs, secs, c0, c1, lc = sys.argv[1:]
+procs, secs = int(procs), float(secs)
+res = [json.load(open(f"{r}/{engine}-w{w}-p{p}.json"))["create"] for p in range(1, procs + 1)]
+ops = sum(x["ops"] for x in res)
+print(f"engine={engine} writers={w} procs={procs} cycles_per_s={ops / secs:.0f} p50_us_max={max(x['p50_us'] for x in res):.0f} "
+      f"p99_us_max={max(x['p99_us'] for x in res):.0f} engine_cores={(int(c1) - int(c0)) / 1e6 / secs:.2f} "
+      f"loader_cores={int(lc) / 1e6 / secs:.2f} engine_cpu_us_per_cycle={(int(c1) - int(c0)) / max(ops, 1):.0f}")
+EOF
   done
   docker rm -f -v wc-engine >/dev/null
 done
