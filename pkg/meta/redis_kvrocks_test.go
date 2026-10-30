@@ -72,3 +72,15 @@ func TestKvrocksDatabases(t *testing.T) {
 		t.Fatalf("non-empty Kvrocks database is reported empty")
 	}
 }
+
+func TestKvrocksClient(t *testing.T) {
+	addr := os.Getenv("KVROCKS_ISOLATED_DB")
+	if addr == "" {
+		t.Skip("KVROCKS_ISOLATED_DB is not set")
+	}
+	m, err := newRedisMeta("redis", addr+"/7", testConfig())
+	if err != nil || m.Name() != "redis" {
+		t.Fatalf("create meta: %s", err)
+	}
+	testMeta(t, m)
+}
