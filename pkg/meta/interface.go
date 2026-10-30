@@ -438,6 +438,10 @@ type Meta interface {
 	HydrateMetadata(ctx Context, root Ino, store object.ObjectStorage, force bool) (*CapsuleInfo, error)
 	ListCapsules(ctx Context) ([]*CapsuleInfo, error)
 	SetCapsuleStorage(store object.ObjectStorage)
+	SetCapsulePolicy(ctx Context, p *CapsulePolicy) error
+	GetCapsulePolicy(ctx Context) (*CapsulePolicy, error)
+	AutoEvict(ctx Context, store object.ObjectStorage, opt AutoEvictOptions) (*AutoEvictReport, error)
+	UnitAccess(ctx Context, roots []Ino) (map[Ino]*UnitAccess, error)
 	// GetSession retrieves information of session with sid
 	GetSession(sid uint64, detail bool) (*Session, error)
 	// ListSessions returns all client sessions.

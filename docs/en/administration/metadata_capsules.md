@@ -23,6 +23,33 @@ juicefs metadata prefetch redis://host:6379/1 /accounts/a1/gen3
 
 `evict` refuses trees larger than `--max-inodes` (default 1 000 000).
 
+## Automatic eviction
+
+A policy names the directories that are evicted and loaded as a whole, for example every account directory under `/accounts`:
+
+```shell
+juicefs metadata policy redis://host:6379/1 /accounts --depth 1
+```
+
+With a policy set, every client records which units it used, at most once per unit per minute. A client that touched more than 100 units in a minute is treated as a scan (`find`, `du`, backup) and its accesses are not recorded.
+
+`auto-evict` runs rounds that evict units:
+
+```shell
+# evict accounts not used for 7 days, every 5 minutes
+juicefs metadata auto-evict redis://host:6379/1 --idle 168h
+
+# also keep Redis memory under 16 GiB: above 90% evict the least used units until 80%
+juicefs metadata auto-evict redis://host:6379/1 --idle 168h --memory-limit 16G
+```
+
+- A unit used or loaded within `--min-resident` (default 1 hour) is kept.
+- Under memory pressure units are chosen by access count halved every `--half-life` (default 24 hours), the least used first.
+- At most `--max-units` units (default 10) are evicted per round. Units that cannot be evicted (open files, a quota inside, too large) are skipped and reported.
+- Run one `auto-evict` per volume. Rounds of a second one fail while the first is evicting.
+- Directories that existed before the policy was set count as last used when the policy was set.
+- `juicefs metadata policy redis://host:6379/1 --clear` stops access tracking.
+
 ## What stays the same
 
 - Paths, inode numbers, permissions, links, xattrs and file contents.

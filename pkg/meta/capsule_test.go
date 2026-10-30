@@ -1,3 +1,19 @@
+/*
+ * JuiceFS, Copyright 2026 Juicedata, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package meta
 
 import (
@@ -792,4 +808,162 @@ func TestRedisCapsuleOnline(t *testing.T) {
 		}
 	}
 	t.Logf("capsule %+v, %d files created by the other client during eviction", info.Inodes, len(created))
+}
+
+func TestRedisCapsuleAutoEvict(t *testing.T) {
+	m, store, _ := capsuleTestMeta(t)
+	m.SetCapsuleStorage(store)
+	ctx := Background()
+	var attr Attr
+	mkdir := func(parent Ino, name string) Ino {
+		var ino Ino
+		if st := m.Mkdir(ctx, parent, name, 0755, 0, 0, &ino, &attr); st != 0 {
+			t.Fatalf("mkdir %s: %s", name, st)
+		}
+		return ino
+	}
+	home := mkdir(RootInode, "home")
+	users := make([]Ino, 5)
+	for i := range users {
+		users[i] = mkdir(home, fmt.Sprintf("u%d", i))
+		sub := mkdir(users[i], "docs")
+		for j := 0; j < 3; j++ {
+			var ino Ino
+			if st := m.Create(ctx, sub, fmt.Sprintf("f%d", j), 0644, 0, 0, &ino, &attr); st != 0 {
+				t.Fatalf("create: %s", st)
+			}
+			m.Close(ctx, ino)
+		}
+	}
+	m.FlushSession()
+	now := time.Now().Unix()
+	if err := m.SetCapsulePolicy(ctx, &CapsulePolicy{Root: home, Depth: 1, Since: now - 30*86400}); err != nil {
+		t.Fatalf("set policy: %s", err)
+	}
+	if p, err := m.GetCapsulePolicy(ctx); err != nil || p.Root != home || p.Depth != 1 {
+		t.Fatalf("get policy: %+v %v", p, err)
+	}
+	use := func(u Ino, n int) {
+		var docs Ino
+		for i := 0; i < n; i++ {
+			if st := m.Lookup(ctx, u, "docs", &docs, &attr, false); st != 0 {
+				t.Fatalf("lookup: %s", st)
+			}
+			var entries []*Entry
+			if st := m.Readdir(ctx, docs, 0, &entries); st != 0 {
+				t.Fatalf("readdir: %s", st)
+			}
+			m.flushAccess(ctx)
+		}
+	}
+	use(users[1], 1)
+	use(users[2], 5)
+	acc, err := m.UnitAccess(ctx, users)
+	if err != nil {
+		t.Fatalf("unit access: %s", err)
+	}
+	if a := acc[users[2]]; a == nil || a.Hits != 5 || a.Last < now {
+		t.Fatalf("access of u2: %+v", a)
+	}
+	if a := acc[users[0]]; a != nil && a.Hits != 0 {
+		t.Fatalf("access of u0: %+v", a)
+	}
+	if acc[home] != nil {
+		t.Fatalf("home is not a unit: %+v", acc[home])
+	}
+
+	opt := AutoEvictOptions{Idle: 7 * 24 * time.Hour, MinResident: time.Hour, HalfLife: 24 * time.Hour, MaxUnits: 2, MaxInodes: 1000}
+	rep, err := m.AutoEvict(ctx, store, opt)
+	if err != nil {
+		t.Fatalf("auto evict: %s", err)
+	}
+	if rep.Units != 5 || len(rep.Evicted) != 2 {
+		t.Fatalf("first round: %+v", rep)
+	}
+	opt.MaxUnits = 10
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil {
+		t.Fatalf("auto evict: %s", err)
+	}
+	if rep.Cold != 2 || len(rep.Evicted) != 1 {
+		t.Fatalf("second round: %+v", rep)
+	}
+	cold := func() map[Ino]bool {
+		infos, err := m.ListCapsules(ctx)
+		if err != nil {
+			t.Fatalf("list: %s", err)
+		}
+		res := make(map[Ino]bool)
+		for _, info := range infos {
+			if info.State == CapsuleCold {
+				res[info.Root] = true
+			}
+		}
+		return res
+	}
+	if c := cold(); len(c) != 3 || !c[users[0]] || !c[users[3]] || !c[users[4]] {
+		t.Fatalf("cold units: %v", c)
+	}
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil || len(rep.Evicted) != 0 || rep.Cold != 3 {
+		t.Fatalf("idle round: %+v %v", rep, err)
+	}
+
+	use(users[0], 1)
+	if c := cold(); c[users[0]] {
+		t.Fatalf("u0 should be loaded on access")
+	}
+	if err := m.rdb.HSet(ctx, m.capsuleAccessKey(), users[0].String(), now-30*86400).Err(); err != nil {
+		t.Fatalf("age access: %s", err)
+	}
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil || len(rep.Evicted) != 0 {
+		t.Fatalf("loaded unit is kept for min-resident: %+v %v", rep, err)
+	}
+
+	opt.Idle = 0
+	opt.MinResident = 0
+	opt.MaxUnits = 1
+	opt.MemoryLimit = 1
+	opt.High, opt.Low = 0.9, 0.8
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil {
+		t.Fatalf("pressure round: %s", err)
+	}
+	if !rep.Pressure || len(rep.Evicted) != 1 || rep.Evicted[0] != users[0] || rep.MemoryBefore <= 0 {
+		t.Fatalf("pressure evicts the least used unit: %+v", rep)
+	}
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil || len(rep.Evicted) != 1 || rep.Evicted[0] != users[1] {
+		t.Fatalf("pressure evicts u1 before u2: %+v %v", rep, err)
+	}
+	opt.MemoryLimit = 1 << 50
+	if rep, err = m.AutoEvict(ctx, store, opt); err != nil || rep.Pressure || len(rep.Evicted) != 0 {
+		t.Fatalf("no pressure: %+v %v", rep, err)
+	}
+
+	scan := mkdir(RootInode, "scan")
+	var units []Ino
+	for i := 0; i < accessScanUnits+1; i++ {
+		units = append(units, mkdir(scan, fmt.Sprintf("d%d", i)))
+	}
+	if err := m.SetCapsulePolicy(ctx, &CapsulePolicy{Root: scan, Depth: 1}); err != nil {
+		t.Fatalf("set policy: %s", err)
+	}
+	for _, u := range units {
+		var entries []*Entry
+		if st := m.Readdir(ctx, u, 0, &entries); st != 0 {
+			t.Fatalf("readdir: %s", st)
+		}
+	}
+	m.flushAccess(ctx)
+	if acc, err = m.UnitAccess(ctx, units); err != nil {
+		t.Fatalf("unit access: %s", err)
+	}
+	for _, u := range units {
+		if a := acc[u]; a != nil && a.Hits != 0 {
+			t.Fatalf("a scan is not counted as access: %+v", a)
+		}
+	}
+	if err := m.SetCapsulePolicy(ctx, nil); err != nil {
+		t.Fatalf("clear policy: %s", err)
+	}
+	if _, err := m.AutoEvict(ctx, store, opt); !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("auto evict without policy: %v", err)
+	}
 }

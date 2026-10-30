@@ -1,3 +1,19 @@
+/*
+ * JuiceFS, Copyright 2026 Juicedata, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package meta
 
 import (
@@ -131,6 +147,12 @@ type capsuleEngine interface {
 	doLoadCapsuleSet(ctx Context, ver int64) (*capsuleSet, error)
 	doScanCapsuleSlices(ctx Context, store object.ObjectStorage, info *CapsuleInfo, fn func(Ino, Slice) error) error
 	doAckCapsules(ctx Context, ver int64, busy string) error
+	doLoadPolicy(ctx Context) (*CapsulePolicy, error)
+	doSetPolicy(ctx Context, p *CapsulePolicy) error
+	doRecordAccess(ctx Context, roots []Ino, now int64) error
+	doLoadAccess(ctx Context, roots []Ino) (map[Ino]*UnitAccess, error)
+	doRecordLoaded(ctx Context, root Ino, now int64) error
+	doMemoryUsed(ctx Context) (int64, error)
 }
 
 func (m *baseMeta) capsuleEngine() (capsuleEngine, error) {
@@ -181,12 +203,18 @@ func (m *baseMeta) watchCapsules(ctx Context) {
 	defer m.sessWG.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	for {
+	m.refreshPolicy(ctx)
+	for i := 1; ; i++ {
 		select {
 		case <-ctx.Done():
+			m.flushAccess(Background())
 			return
 		case <-ticker.C:
 			m.refreshCapsules(ctx)
+			if i%accessFlushTicks == 0 {
+				m.refreshPolicy(ctx)
+				m.flushAccess(ctx)
+			}
 		}
 	}
 }
@@ -252,6 +280,7 @@ func (m *baseMeta) coldSummary(ino Ino) (*Summary, bool) {
 }
 
 func (m *baseMeta) ensureHot(ctx Context, ino Ino, entries bool) syscall.Errno {
+	m.touchAccess(ino)
 	s := m.capsuleSet(ctx)
 	if s == nil || len(s.roots) == 0 {
 		return 0
@@ -300,6 +329,9 @@ func (m *baseMeta) hydrateUnit(ctx Context, root Ino) syscall.Errno {
 		switch {
 		case err == nil:
 			logger.Infof("Loaded metadata of inode %d (%d inodes) in %s", root, info.Inodes, time.Since(start))
+			if err := c.doRecordLoaded(ctx, root, time.Now().Unix()); err != nil {
+				logger.Warnf("Record load of inode %d: %s", root, err)
+			}
 			m.refreshCapsules(ctx)
 			return 0
 		case errors.Is(err, syscall.ENOENT):
