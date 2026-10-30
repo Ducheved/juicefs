@@ -14,6 +14,7 @@ metad_start() {
   local data=$1 port=$2 cg=$3 mem=$4
   cg_make $cg $mem
   GOMAXPROCS=2 GOMEMLIMIT=1GiB cg_exec $cg taskset -c $ENGINE_CPUS $S/bin/juicefs-metad metad --listen 127.0.0.1:$port --cache-size ${METAD_CACHE_MB:-768} $data > $data.log 2>&1 &
+  METAD_JOB=$!
   for i in $(seq 1 60); do
     if (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null; then
       METAD_PID=$(head -1 $cg/cgroup.procs)
@@ -25,6 +26,6 @@ metad_start() {
 }
 metad_stop() {
   kill $METAD_PID
-  for i in $(seq 1 60); do [ -z "$(cat $1/cgroup.procs)" ] && break; sleep 1; done
+  wait $METAD_JOB || true
   rmdir $1
 }

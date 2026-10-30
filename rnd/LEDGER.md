@@ -321,3 +321,18 @@ Pebble v2.1.7 in one process, no network, no replication, no conflict checks. Cg
 | JuiceFS EE: all metadata in memory on 3 Raft nodes; ≈ 600 → 50 B/file with compression, 100 B/file planned, 300 M files in 30 GiB | juicefs.com/en/blog/engineering/reduce-metadata-memory-usage (2024-02-22) |
 | CephFS embeds single-link inodes in directory fragments; backtraces replace the anchor table; async create/unlink with delegated inode numbers since kernel 5.7 | Weil OSDI'06; docs.ceph.com Firefly release notes; lore.kernel.org 20200212172729 |
 | Lustre metadata write-back cache: 10–20× on createmany in VMs, a proposal (LU-10983), not shipped | wiki.lustre.org LUG2023-Metadata_WBC-Drokin.pdf |
+
+## metad P1: single node, JuiceFS TKV over the network (`feat/metad` 15823bd5, `results/vm/metad-*`, `results/vm/write-ceiling-spread*metad*`)
+
+Server: `juicefs metad`, Pebble v2.1.7, snapshot reads per transaction, optimistic validation against an in-memory recent-writes index (point keys and scanned ranges), one committer batching transactions into one synced Pebble batch. Client: `metad://` `tkvClient`, 64 connections per process. No replication yet. Same VM, cores and loaders as the engine tables above; server in a 2 GiB cgroup on cores 0-1, `GOMAXPROCS=2`, `GOMEMLIMIT=1GiB`, block cache 768 MB.
+
+| Item | Label | Value |
+|---|---|---|
+| JuiceFS shared meta test suite (`testMeta`) on `metad://` | RUN | pass, 33–38 s; `testTKV` pass; conflict, phantom, snapshot and expired-snapshot cases pass (`TestMetadTransactions`) |
+| Growth to 4 M files, two runs | RUN | gen 103–126 s per 1 M (Valkey 476–480, PostgreSQL 450–456, Kvrocks 1 313–1 339); stat p50 hot / all 371–377 / 383–404 µs, p99 ≤ 502 µs; create p50 367–380 µs, p99 ≤ 498 µs; server CPU per probe op 578–634 µs; 0 OOM |
+| Memory at 4 M (second run) | RUN | cgroup 1 334 MB (peak 1 355), anon 728 MB, file 586 MB; anon grows with the block cache filling (447 → 728 MB from 1 M to 4 M, data 357 → 615 MB) and is bounded by the 768 MB cache plus memtables and Go heap |
+| Disk at 4 M | RUN | 615 MB incl. WAL ≈ 153 B/file (falls as fixed WAL and memtable overhead amortises; Pebble alone at 39 M: 77 B/file SST) |
+| Write ceiling, writers 4 / 16 / 64 / 256 | RUN | 1 726 / 3 963 / 6 133 / 5 539 cycles/s; p99 1.9 / 5.5 / 19 / 106 ms; engine 0.77 / 1.16 / 1.50 / 1.41 cores; 245–444 µs engine CPU per cycle; logged retries 150 / 1 305 / 7 109 / 17 134 (doMknod on the parent inode) |
+| Against Valkey on the same test | RUN | write ceiling 1.6–3.2× Valkey at every writer count; create p50 2.2× faster (370 vs 815 µs); stat p50 1.8× slower (≈ 380 vs 208–221 µs) and server CPU per probe op 1.7× higher (≈ 600 vs 347–357 µs) |
+| Why stat costs more | SOURCE | probe stat = 3 `Lookup` + `GetAttr`; TKV `doLookup` is two gets (entry, then inode) = 2 round trips each → 7 round trips per stat; Redis `Lookup` is one EVALSHA → 4 commands per stat |
+| Not measured | NOTE | replication (P2), 39 M through the server, thousands of client processes, mixed read/write load, failure behaviour |

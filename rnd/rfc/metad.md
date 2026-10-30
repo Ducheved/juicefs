@@ -1,6 +1,6 @@
 # metad: durable, highly available metadata service in ≤ 2 GiB per replica
 
-Status: draft, 2026-10-30. P0 done. Evidence labels as in `LEDGER.md`.
+Status: draft, 2026-10-30. P0 and P1 done. Evidence labels as in `LEDGER.md`.
 
 ## Constraints
 
@@ -86,7 +86,14 @@ P0, Pebble alone with the JuiceFS TKV layout, 39 M files, 2 GiB cgroup including
 - Lookup over all 39 M uniformly: p50 83 µs, p99 2.0 ms, 49 µs CPU; hot 10 k: p50 12 µs, 13 µs CPU.
 - Synced creates: 1.8 k txn/s with one writer, 22 k txn/s with 64 writers (p99 8 ms), 64–129 µs CPU per transaction.
 
-Not yet measured: network, replication, conflict checks, the JuiceFS client on top (P1, P2).
+P1, single-node `metad` with the JuiceFS client over the network, same VM and caps as the engine comparison (RUN, `LEDGER.md` "metad P1"):
+
+- JuiceFS shared meta test suite passes on `metad://`.
+- Write ceiling 1 726 → 6 133 create/unlink cycles/s (Valkey 660 → 3 723, Kvrocks ≈ 550, PostgreSQL ≈ 1 200).
+- Growth to 4 M: 4.5× faster generation than Valkey, create p50 370 µs (Valkey 815), stat p50 ≈ 380 µs (Valkey ≈ 210), server CPU per probe op ≈ 600 µs (Valkey ≈ 350); memory bounded by the cache, 0 OOM.
+- Next for reads: a server-side lookup (entry and attribute in one round trip) to bring stat from 7 to 4 round trips.
+
+Not yet measured: replication (P2), 39 M through the server, many client processes.
 
 ## Plan
 

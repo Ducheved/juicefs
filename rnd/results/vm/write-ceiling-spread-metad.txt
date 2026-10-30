@@ -1,0 +1,6 @@
+label=spread users=8 dirs=64 files=20 procs=4 engine_cpus=0-1 load_cpus=2-3
+engine=metad writers=4 procs=4 cycles_per_s=1726 p50_us_max=1094 p99_us_max=1926 engine_cores=0.77 loader_cores=0.67 engine_cpu_us_per_cycle=444
+engine=metad writers=16 procs=4 cycles_per_s=3963 p50_us_max=1761 p99_us_max=5526 engine_cores=1.16 loader_cores=1.17 engine_cpu_us_per_cycle=292
+engine=metad writers=64 procs=4 cycles_per_s=6133 p50_us_max=3999 p99_us_max=19017 engine_cores=1.50 loader_cores=1.44 engine_cpu_us_per_cycle=245
+engine=metad writers=256 procs=4 cycles_per_s=5539 p50_us_max=12304 p99_us_max=105870 engine_cores=1.41 loader_cores=1.57 engine_cpu_us_per_cycle=255
+rmdir: failed to remove '/sys/fs/cgroup/wc-metad': Device or resource busy

@@ -1,0 +1,15 @@
+metad mem=2G cache_mb=768 engine_cpus=0-1 load_cpus=2-3 pid=104939
+round=0 files=1000000 gen_s=124 gen_server_cpu_s=141 dir_bytes=357101530 b_per_file=357 cg_now_mb=799 cg_peak_mb=826 rss_mb=520 anon_mb=447 file_mb=340 oom_kills=0
+r0-hot10k {"create_p50_us":367,"create_p99_us":456,"label":"r0-hot10k","stat_p50_us":374,"stat_p99_us":469} server_cpu_us_per_op=578
+r0-all {"create_p50_us":370,"create_p99_us":467,"label":"r0-all","stat_p50_us":383,"stat_p99_us":464} server_cpu_us_per_op=599
+round=1 files=2000000 gen_s=104 gen_server_cpu_s=142 dir_bytes=448157704 b_per_file=224 cg_now_mb=961 cg_peak_mb=991 rss_mb=593 anon_mb=519 file_mb=427 oom_kills=0
+r1-hot10k {"create_p50_us":367,"create_p99_us":460,"label":"r1-hot10k","stat_p50_us":376,"stat_p99_us":476} server_cpu_us_per_op=583
+r1-all {"create_p50_us":373,"create_p99_us":472,"label":"r1-all","stat_p50_us":398,"stat_p99_us":502} server_cpu_us_per_op=614
+round=2 files=3000000 gen_s=104 gen_server_cpu_s=143 dir_bytes=532819891 b_per_file=177 cg_now_mb=1164 cg_peak_mb=1169 rss_mb=713 anon_mb=638 file_mb=508 oom_kills=0
+r2-hot10k {"create_p50_us":376,"create_p99_us":479,"label":"r2-hot10k","stat_p50_us":375,"stat_p99_us":472} server_cpu_us_per_op=599
+r2-all {"create_p50_us":380,"create_p99_us":475,"label":"r2-all","stat_p50_us":401,"stat_p99_us":500} server_cpu_us_per_op=628
+round=3 files=4000000 gen_s=105 gen_server_cpu_s=145 dir_bytes=615048400 b_per_file=153 cg_now_mb=1334 cg_peak_mb=1355 rss_mb=802 anon_mb=728 file_mb=586 oom_kills=0
+r3-hot10k {"create_p50_us":371,"create_p99_us":459,"label":"r3-hot10k","stat_p50_us":377,"stat_p99_us":475} server_cpu_us_per_op=594
+r3-all {"create_p50_us":380,"create_p99_us":491,"label":"r3-all","stat_p50_us":404,"stat_p99_us":486} server_cpu_us_per_op=634
+== done 19:30:58 oom_kills=0
+rmdir: failed to remove '/sys/fs/cgroup/metad-growth': Device or resource busy

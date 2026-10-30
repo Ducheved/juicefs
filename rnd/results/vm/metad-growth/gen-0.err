@@ -1,0 +1,6 @@
+2026/10/30 19:23:02.543392 juicefs[104956] <INFO>: Meta address: metad://127.0.0.1:9520/jfs?conns=64 [NewClient@interface.go:686]
+2026/10/30 19:23:02.548416 juicefs[104956] <INFO>: Create session 1 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 19:25:04.138053 juicefs[104956] <INFO>: flush session 1: [FlushSession@base.go:1048]
+2026/10/30 19:25:06.138534 juicefs[104956] <INFO>: flush session 1: [FlushSession@base.go:1048]
+2026/10/30 19:25:06.139955 juicefs[104956] <INFO>: close session 1: <nil> [CloseSession@base.go:1037]
+files=1000000 dirs=10100 inodes=1010100 gen=121.6s used_memory_delta=0 per_file=0.0 per_inode=0.0
