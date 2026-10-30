@@ -1,0 +1,76 @@
+2026/10/30 11:52:14.395776 juicefs[10522] <INFO>: Meta address: redis://127.0.0.1:6674/0 [NewClient@interface.go:686]
+2026/10/30 11:52:14.397447 juicefs[10522] <INFO>: Ping redis latency: 127.745µs [checkServerConfig@redis.go:4800]
+2026/10/30 11:52:14.399730 juicefs[10522] <INFO>: Create session 3 OK with version: 1.5.0-dev+unknown [NewSession@base.go:830]
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:22 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:23 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+redis: 2026/10/30 11:52:24 pool.go:617: redis: connection pool: failed to dial after 5 attempts: dial tcp 127.0.0.1:6674: connect: connection refused
+2026/10/30 11:52:28.630242 juicefs[10522] <WARNING>: unexpected error for lookup: dial tcp 127.0.0.1:6674: connect: connection refused [handleLuaResult@redis.go:978]
+2026/10/30 11:52:29.672083 juicefs[10522] <WARNING>: unexpected error for lookup: dial tcp 127.0.0.1:6674: connect: connection refused [handleLuaResult@redis.go:978]
+2026/10/30 11:52:33.568422 juicefs[10522] <WARNING>: unexpected error for lookup: dial tcp 127.0.0.1:6674: connect: connection refused [handleLuaResult@redis.go:978]
+2026/10/30 11:52:35.581632 juicefs[10522] <WARNING>: unexpected error for lookup: dial tcp 127.0.0.1:6674: connect: connection refused [handleLuaResult@redis.go:978]
+2026/10/30 11:52:36.121876 juicefs[10522] <WARNING>: unexpected error for lookup: dial tcp 127.0.0.1:6674: connect: connection refused [handleLuaResult@redis.go:978]
+2026/10/30 11:52:36.728012 juicefs[10522] <ERROR>: error: EOF
+goroutine 78 [running]:
+runtime/debug.Stack()
+	/root/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.10.linux-amd64/src/runtime/debug/stack.go:26 +0x5e
+github.com/juicedata/juicefs/pkg/meta.errno({0x449e220, 0x64a1340})
+	/home/user/juicefs/pkg/meta/utils.go:164 +0x185
+github.com/juicedata/juicefs/pkg/meta.(*redisMeta).doMknod(0xc00042bb00, {0x45083d8, 0xc000376300}, 0x9, {0xc001916c50, 0x9}, 0x1, 0x1a4, 0x0, {0x0, ...}, ...)
+	/home/user/juicefs/pkg/meta/redis.go:1516 +0x29f
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Mknod(0xc00078ea08, {0x45083d8, 0xc000376300}, 0x9, {0xc001916c50, 0x9}, 0x1, 0x1a4, 0x0, 0x0, ...)
+	/home/user/juicefs/pkg/meta/base.go:1731 +0x558
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Create(0xc00078ea08, {0x45083d8?, 0xc000376300?}, 0x6698460?, {0xc001916c50?, 0x0?}, 0x0?, 0x0?, 0x0, 0xc001916c48, ...)
+	/home/user/juicefs/pkg/meta/base.go:1745 +0x10b
+main.main.func2(0x2)
+	/home/user/juicefs/rnd/mixload/main.go:125 +0x3e2
+created by main.main in goroutine 1
+	/home/user/juicefs/rnd/mixload/main.go:115 +0x8bf [errno@utils.go:164]
+2026-10-30 11:52:36.728065 I | create: input/output error

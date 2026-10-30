@@ -1,0 +1,6 @@
+rep1 mixload exit=1 last=I | lookup result_main_b41140.ipynb: input/output error
+rep2 mixload exit=1 last=I | create: input/output error
+rep3 mixload exit=1 last=I | create: input/output error
+usedInodes 7394 tree+trash 7394 diff 0 | usedSpace 977285120 tree+trash 977285120 diff 0 | empty 3383 delfiles 0 sustained 0
+usedInodes 12138 tree+trash 12138 diff 0 | usedSpace 996716544 tree+trash 996716544 diff 0 | empty 8127 delfiles 0 sustained 0
+usedInodes 17534 tree+trash 17534 diff 0 | usedSpace 1018818560 tree+trash 1018818560 diff 0 | empty 13523 delfiles 0 sustained 0
