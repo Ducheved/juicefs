@@ -95,6 +95,7 @@ type redisMeta struct {
 	prefix     string
 	shaLookup  string // The SHA returned by Redis for the loaded `scriptLookup`
 	shaResolve string // The SHA returned by Redis for the loaded `scriptResolve`
+	evalRO     bool
 	cache      *redisCache
 }
 
@@ -489,6 +490,11 @@ func (m *redisMeta) doNewSession(sinfo []byte, update bool) error {
 	if m.shaResolve, err = m.rdb.ScriptLoad(Background(), scriptResolve).Result(); err != nil {
 		logger.Warnf("load scriptResolve: %v", err)
 		m.shaResolve = ""
+	}
+	if info, err := m.rdb.Do(ctx, "COMMAND", "INFO", "evalsha_ro").Slice(); err != nil {
+		logger.Warnf("check EVALSHA_RO: %v", err)
+	} else {
+		m.evalRO = len(info) == 1 && info[0] != nil
 	}
 
 	if !m.conf.NoBGJob {
@@ -933,6 +939,13 @@ func (m *redisMeta) doScanSustainedInodes(ctx Context, fn func(uid, gid uint32, 
 // redisMeta updates the usage in each transaction
 func (m *redisMeta) doFlushStats() {}
 
+func (m *redisMeta) evalSha(ctx Context, sha string, keys []string, args ...interface{}) *redis.Cmd {
+	if m.evalRO {
+		return m.rdb.EvalShaRO(ctx, sha, keys, args...)
+	}
+	return m.rdb.EvalSha(ctx, sha, keys, args...)
+}
+
 func (m *redisMeta) handleLuaResult(op string, res interface{}, err error, returnedIno *int64, returnedAttr *string) syscall.Errno {
 	if err != nil {
 		msg := err.Error()
@@ -1026,7 +1039,7 @@ func (m *redisMeta) doLookup(ctx Context, parent Ino, name string, inode *Ino, a
 		var res interface{}
 		var returnedIno int64
 		var returnedAttr string
-		res, err = m.rdb.EvalSha(ctx, m.shaLookup, []string{entryKey, name}).Result()
+		res, err = m.evalSha(ctx, m.shaLookup, []string{entryKey, name}).Result()
 		if st := m.handleLuaResult("lookup", res, err, &returnedIno, &returnedAttr); st == 0 {
 			foundIno = Ino(returnedIno)
 			encodedAttr = []byte(returnedAttr)
@@ -1079,7 +1092,7 @@ func (m *redisMeta) Resolve(ctx Context, parent Ino, path string, inode *Ino, at
 	for _, gid := range ctx.Gids() {
 		gids = append(gids, strconv.FormatUint(uint64(gid), 10))
 	}
-	res, err := m.rdb.EvalSha(ctx, m.shaResolve, keys, gids...).Result()
+	res, err := m.evalSha(ctx, m.shaResolve, keys, gids...).Result()
 	var returnedIno int64
 	var returnedAttr string
 	st := m.handleLuaResult("resolve", res, err, &returnedIno, &returnedAttr)

@@ -20,6 +20,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestRedisLoadIntoNonEmptyDatabase(t *testing.T) {
@@ -78,9 +80,58 @@ func TestKvrocksClient(t *testing.T) {
 	if addr == "" {
 		t.Skip("KVROCKS_ISOLATED_DB is not set")
 	}
+	w, err := newRedisMeta("redis", addr+"/8", testConfig())
+	if err != nil {
+		t.Fatalf("create meta: %s", err)
+	}
+	testLookupKeepsWatch(t, w)
 	m, err := newRedisMeta("redis", addr+"/7", testConfig())
 	if err != nil || m.Name() != "redis" {
 		t.Fatalf("create meta: %s", err)
 	}
 	testMeta(t, m)
+}
+
+func TestRedisLookupKeepsWatch(t *testing.T) {
+	m, err := newRedisMeta("redis", "127.0.0.1:6379/10", testConfig())
+	if err != nil {
+		t.Fatalf("create meta: %s", err)
+	}
+	testLookupKeepsWatch(t, m)
+}
+
+func testLookupKeepsWatch(t *testing.T, m Meta) {
+	if err := m.Reset(); err != nil {
+		t.Fatalf("reset: %s", err)
+	}
+	if err := m.Init(testFormat(), false); err != nil {
+		t.Fatalf("init: %s", err)
+	}
+	if err := m.NewSession(true); err != nil {
+		t.Fatalf("new session: %s", err)
+	}
+	defer m.CloseSession()
+	r := m.(*redisMeta)
+	ctx := Background()
+	var inode Ino
+	var attr Attr
+	if st := m.Create(ctx, RootInode, "f", 0644, 0, 0, &inode, &attr); st != 0 {
+		t.Fatalf("create: %s", st)
+	}
+	err := r.rdb.Watch(ctx, func(tx *redis.Tx) error {
+		if st := m.Lookup(ctx, RootInode, "f", &inode, &attr, false); st != 0 {
+			t.Fatalf("lookup: %s", st)
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HDel(ctx, r.entryKey(RootInode), "probe")
+			return nil
+		})
+		return err
+	}, r.entryKey(RootInode))
+	if err != nil {
+		t.Fatalf("transaction watching the parent after a lookup: %s", err)
+	}
+	if r.shaLookup == "" {
+		t.Fatalf("lookup script is not in use")
+	}
 }
