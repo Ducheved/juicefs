@@ -40,11 +40,19 @@ start_pg() {
   docker exec wc-engine psql -U postgres -p 5433 -At -c "create database jfs" >/dev/null
   M="postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable"
 }
+start_metad() {
+  rm -rf /srv/stand/stand/wc-metad
+  mkdir -p /srv/stand/stand/wc-metad
+  ENGINE_CG=/sys/fs/cgroup/wc-metad
+  metad_start /srv/stand/stand/wc-metad 6390 $ENGINE_CG 2G
+  M="metad://127.0.0.1:6390/jfs?conns=64"
+}
 echo "label=$LABEL users=$USERS dirs=$DIRS files=$FILES procs=$PROCS engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
 for engine in $ENGINES; do
   docker rm -f -v wc-engine >/dev/null 2>&1 || true
+  ENGINE_CG=
   start_$engine
-  CG=$(container_cg wc-engine)
+  CG=${ENGINE_CG:-$(container_cg wc-engine)}
   load $S/bin/nsgen3 -meta "$M" -random -users $USERS -dirs $DIRS -files $FILES -trash-days 0 -families=false > $R/$engine-gen.json 2> $R/$engine-gen.err
   for w in $WRITERS; do
     procs=$(( w < PROCS ? w : PROCS ))
@@ -68,6 +76,6 @@ print(f"engine={engine} writers={w} procs={procs} cycles_per_s={ops / secs:.0f} 
       f"loader_cores={int(lc) / 1e6 / secs:.2f} engine_cpu_us_per_cycle={(int(c1) - int(c0)) / max(ops, 1):.0f}")
 EOF
   done
-  docker rm -f -v wc-engine >/dev/null
+  if [ -n "$ENGINE_CG" ]; then metad_stop $ENGINE_CG; else docker rm -f -v wc-engine >/dev/null; fi
 done
 echo "== done $(date -u +%T)"
