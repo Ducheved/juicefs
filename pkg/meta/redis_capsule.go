@@ -1,3 +1,19 @@
+/*
+ * JuiceFS, Copyright 2026 Juicedata, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package meta
 
 import (
@@ -979,4 +995,107 @@ func (m *redisMeta) doScanCapsuleSlices(ctx Context, store object.ObjectStorage,
 		}
 	}
 	return nil
+}
+
+func (m *redisMeta) capsulePolicyKey() string {
+	return m.prefix + "capsulePolicy"
+}
+
+func (m *redisMeta) capsuleAccessKey() string {
+	return m.prefix + "capsuleAccess"
+}
+
+func (m *redisMeta) capsuleHitsKey() string {
+	return m.prefix + "capsuleHits"
+}
+
+func (m *redisMeta) doLoadPolicy(ctx Context) (*CapsulePolicy, error) {
+	body, err := m.rdb.Get(ctx, m.capsulePolicyKey()).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var p CapsulePolicy
+	if err = json.Unmarshal(body, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (m *redisMeta) doSetPolicy(ctx Context, p *CapsulePolicy) error {
+	if p == nil {
+		return m.rdb.Del(ctx, m.capsulePolicyKey()).Err()
+	}
+	body, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return m.rdb.Set(ctx, m.capsulePolicyKey(), body, 0).Err()
+}
+
+func (m *redisMeta) doRecordAccess(ctx Context, roots []Ino, now int64) error {
+	_, err := m.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, r := range roots {
+			pipe.HSet(ctx, m.capsuleAccessKey(), r.String(), now)
+			pipe.HIncrBy(ctx, m.capsuleHitsKey(), r.String(), 1)
+		}
+		return nil
+	})
+	return err
+}
+
+func (m *redisMeta) doMemoryUsed(ctx Context) (int64, error) {
+	raw, err := m.rdb.Info(ctx, "memory").Result()
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range strings.Split(raw, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "used_memory:"); ok {
+			return strconv.ParseInt(v, 10, 64)
+		}
+	}
+	return 0, fmt.Errorf("used_memory is not reported by the metadata engine")
+}
+
+func (m *redisMeta) capsuleLoadedKey() string {
+	return m.prefix + "capsuleLoaded"
+}
+
+func (m *redisMeta) doRecordLoaded(ctx Context, root Ino, now int64) error {
+	return m.rdb.HSet(ctx, m.capsuleLoadedKey(), root.String(), now).Err()
+}
+
+func (m *redisMeta) doLoadAccess(ctx Context, roots []Ino) (map[Ino]*UnitAccess, error) {
+	res := make(map[Ino]*UnitAccess, len(roots))
+	for i := 0; i < len(roots); i += capsuleBatch {
+		batch := roots[i:min(i+capsuleBatch, len(roots))]
+		fields := make([]string, len(batch))
+		for j, r := range batch {
+			fields[j] = r.String()
+		}
+		var last, hits, loaded *redis.SliceCmd
+		if _, err := m.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			last = pipe.HMGet(ctx, m.capsuleAccessKey(), fields...)
+			hits = pipe.HMGet(ctx, m.capsuleHitsKey(), fields...)
+			loaded = pipe.HMGet(ctx, m.capsuleLoadedKey(), fields...)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		for j, r := range batch {
+			a := &UnitAccess{Root: r}
+			if v, ok := last.Val()[j].(string); ok {
+				a.Last, _ = strconv.ParseInt(v, 10, 64)
+			}
+			if v, ok := hits.Val()[j].(string); ok {
+				a.Hits, _ = strconv.ParseInt(v, 10, 64)
+			}
+			if v, ok := loaded.Val()[j].(string); ok {
+				a.Loaded, _ = strconv.ParseInt(v, 10, 64)
+			}
+			res[r] = a
+		}
+	}
+	return res, nil
 }

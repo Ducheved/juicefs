@@ -305,6 +305,9 @@ type baseMeta struct {
 	capsuleStore object.ObjectStorage
 	capsuleLocks sync.Map
 
+	capsulePolicy atomic.Pointer[CapsulePolicy]
+	access        accessTracker
+
 	sessWG sync.WaitGroup
 
 	dSliceMu sync.Mutex
