@@ -1,0 +1,15 @@
+shared_buffers=64MB fsync=on synchronous_commit=on version=16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)
+round=0 files=1000000 gen_s=373 gen_server_cpu_s=688 db_bytes=656768023 db_b_per_file=656 wal_bytes=1073741824 cg_now_mb=176 cg_max_mb=192 oom_kills=0
+r0-hot10k {"create_p50_us":1009,"create_p99_us":2560,"label":"r0-hot10k","stat_p50_us":358,"stat_p99_us":1216} server_cpu_us_per_op=687
+r0-all {"create_p50_us":1086,"create_p99_us":2790,"label":"r0-all","stat_p50_us":691,"stat_p99_us":2693} server_cpu_us_per_op=814
+round=1 files=2000000 gen_s=367 gen_server_cpu_s=692 db_bytes=1288911895 db_b_per_file=644 wal_bytes=1073741824 cg_now_mb=190 cg_max_mb=192 oom_kills=0
+r1-hot10k {"create_p50_us":1093,"create_p99_us":2921,"label":"r1-hot10k","stat_p50_us":371,"stat_p99_us":1094} server_cpu_us_per_op=922
+r1-all {"create_p50_us":1155,"create_p99_us":3111,"label":"r1-all","stat_p50_us":770,"stat_p99_us":2906} server_cpu_us_per_op=868
+round=2 files=3000000 gen_s=370 gen_server_cpu_s=700 db_bytes=1940298775 db_b_per_file=646 wal_bytes=1073741824 cg_now_mb=181 cg_max_mb=192 oom_kills=0
+r2-hot10k {"create_p50_us":1025,"create_p99_us":2514,"label":"r2-hot10k","stat_p50_us":363,"stat_p99_us":1224} server_cpu_us_per_op=679
+r2-all {"create_p50_us":1132,"create_p99_us":2498,"label":"r2-all","stat_p50_us":751,"stat_p99_us":2754} server_cpu_us_per_op=866
+round=3 files=4000000 gen_s=375 gen_server_cpu_s=702 db_bytes=2571123735 db_b_per_file=642 wal_bytes=1073741824 cg_now_mb=174 cg_max_mb=192 oom_kills=0
+r3-hot10k {"create_p50_us":960,"create_p99_us":2229,"label":"r3-hot10k","stat_p50_us":343,"stat_p99_us":1277} server_cpu_us_per_op=650
+r3-all {"create_p50_us":1068,"create_p99_us":2780,"label":"r3-all","stat_p50_us":814,"stat_p99_us":2883} server_cpu_us_per_op=889
+== done 13:20:07 oom_kills=0
+exit=0

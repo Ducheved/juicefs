@@ -238,3 +238,16 @@ Script: `rnd/kvrocks-growth.sh`; block cache 64 MB, write buffer 8 MB × 2, `syn
 | 8 M | 173 | 5.39 | 192 | 0 | 387 / 944 | 597 / 1126 | 622 / 1378 | 656 |
 
 Raw: `results/kvrocks-growth.txt`, `results/kvrocks-growth/`. RAM stays at the cap while files grow 8×; the hot set stays flat; uniform reads over all files pay disk reads (one p99 spike to 69 ms at 3 M). SST shrinks to 173 B/file as compaction reaches lower levels; archived WAL grows linearly with writes (5.4 GB at 8 M).
+
+## PostgreSQL growth under a 192 MiB cgroup (page cache included)
+
+Script: `rnd/pg-growth.sh`; PostgreSQL 16.15, `shared_buffers 64MB`, `fsync on`, `synchronous_commit on`; all postgres processes in one memory + cpuacct cgroup; same generator (`nsgen -random`, 100 users × 100 dirs × 100 files per round, 32 threads) and probe as the Kvrocks growth run. Raw: `results/pg-growth.txt`, `results/pg-growth/`.
+
+| Files | DB B/file | pg_wal GB | cgroup max MB | OOM kills | gen s per 1 M | hot 10 k stat p50/p99 µs | all stat p50/p99 µs | create p50/p99 µs | server CPU µs/op |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 M | 656 | 1.07 | 192 | 0 | 373 | 358 / 1216 | 691 / 2693 | 1086 / 2790 | 814 |
+| 2 M | 644 | 1.07 | 192 | 0 | 367 | 371 / 1094 | 770 / 2906 | 1155 / 3111 | 868 |
+| 3 M | 646 | 1.07 | 192 | 0 | 370 | 363 / 1224 | 751 / 2754 | 1132 / 2498 | 866 |
+| 4 M | 642 | 1.07 | 192 | 0 | 375 | 343 / 1277 | 814 / 2883 | 1068 / 2780 | 889 |
+
+Against Kvrocks at 4 M under the same cap (RUN, both tables): bulk generation 375 s vs ≈ 800–930 s per million; hot stat p50 equal (≈ 350 µs); uniform stat p50 814 vs 533 µs; create p50 ≈ 1.0–1.1 ms vs ≈ 0.6 ms; disk 642 vs 251 B/file; WAL bounded by `max_wal_size` (1 GB) vs Kvrocks' 3 h archive. The probe walks paths with `Lookup` on SQL (Resolve is ENOTSUP) and with one Lua `Resolve` on Kvrocks, so stat includes more round trips on PostgreSQL.
