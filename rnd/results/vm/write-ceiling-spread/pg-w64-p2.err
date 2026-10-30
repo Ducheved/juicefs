@@ -1,0 +1,5 @@
+2026/10/30 17:38:42.601003 juicefs[78664] <INFO>: Meta address: postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable [NewClient@interface.go:686]
+2026/10/30 17:38:42.607823 juicefs[78664] <WARNING>: The latency to database is too high: 6.637232ms [newSQLMeta@sql.go:536]
+2026/10/30 17:38:42.692378 juicefs[78664] <INFO>: Create session 11 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 17:39:13.580150 juicefs[78664] <INFO>: flush session 11: [FlushSession@base.go:1048]
+2026/10/30 17:39:13.600831 juicefs[78664] <INFO>: close session 11: <nil> [CloseSession@base.go:1037]

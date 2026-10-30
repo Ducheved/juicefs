@@ -261,3 +261,32 @@ Script: `rnd/badger-growth.sh`; `badger://…?sync=true`; JuiceFS sets only `Syn
 | 10 000 files, 192 MiB cap | RUN | peak 98 MB, no OOM (smoke) |
 | 1 M-file round, 192 MiB cap | RUN | OOM-killed during the first round (`results/badger-growth-192m`) |
 | 1 M-file round, 2 GiB cap | RUN, partial | peak 649 MB after ~4 min of the first round; run stopped before the round ended (moved to a larger machine) |
+
+## M2 on the bench VM (4 vCPU EPYC 9754, 15 GiB, one 128 GB disk; engine on cores 0-1, loader on 2-3; `results/vm`)
+
+Corpus `nsgen3 -random`, 1 M files per round, 4 rounds. Probe: 3 000 path walks by `Lookup` + `GetAttr` and 3 000 create/close/unlink cycles, one client; "server CPU per op" is engine cgroup CPU / 6 000 probe operations, not per command. Builds from `rnd` use plain `EVALSHA` (`fix/kvrocks-guards` not merged).
+
+| Engine, cap | Memory at 4 M | Disk per file | stat p50 hot / all | create p50 | Server CPU per op | Gen per 1 M | OOM |
+|---|---|---|---|---|---|---|---|
+| Kvrocks 2.17.0, 192 MiB, cache 64 MB, sync yes | RSS 128–139 MB flat in N | SST 252 B + WAL 2.7 GB (3 h TTL) | 711 / 1 416 µs | 939 / 978 µs | 713–717 µs | 1 313–1 339 s | 0 |
+| PostgreSQL 18.4 (CNPG image), 192 MiB, shared_buffers 64 MB | at cap (page cache included) | 637 B + WAL 1 GB | 410 / 1 908 µs | 862 / 1 206 µs | 645–908 µs | 450–456 s (engine CPU-bound, 1.87 cores) | 0 |
+| Valkey 9.1.1, maxmemory 2 GB, AOF always | used_memory 947 MB = 236 B/file | AOF 189 B | 208 / 221 µs | 815 / 823 µs | 347–357 µs | 476–480 s | 0 |
+| Badger v4 in-process, 2 GiB | peak 826 → 1 472 → 1 576 → 1 963 MB during generation | 687 B (vlog preallocated 2 GB), SST 116 B | 48 / 73 µs (no network) | 493 / 536 µs | n/a | 424–430 s | 0 |
+
+Kvrocks memory is flat in file count; its all-files stat grows with SST size over a 64 MB cache (717 → 1 416 µs from 1 M to 4 M). Valkey reaches 2 GiB at ≈ 9 M files (CALC from 236 B/file).
+
+## Write ceiling (`rnd/write-ceiling.sh`, `results/vm/write-ceiling-*`)
+
+Cycle = Create + Close + Unlink (two write transactions). ≈ 10 k files in 512 dirs, 4 loader processes, writers split evenly, 30 s per step. Engine CPU from its cgroup.
+
+| Writers | Valkey cycles/s (p99) | Kvrocks cycles/s (p99) | PostgreSQL cycles/s (p99) |
+|---|---|---|---|
+| 4 | 660 (4.7 ms) | 549 (7.4 ms) | 1 126 (3.9 ms) |
+| 16 | 1 257 (12.8 ms) | 550 (47 ms) | 1 238 (17 ms) |
+| 64 | 2 833 (32 ms) | 539 (266 ms) | 936 (431 ms) |
+| 256 | 3 723 (169 ms) | 444 (1.8 s) | OOM-killed at 512 MiB (one backend per connection) |
+| Engine cores at the top | 0.84 | 0.44–0.48 | 2.0 (saturated; loader also ≈ 1.7 of 2) |
+| Engine CPU per cycle | 215–405 µs | 838–998 µs | 1 070–2 200 µs |
+| Retried transactions at 256 / 64 | 16 846 / 3 739 | 2 031 / 431 | 2 / 0 |
+
+Kvrocks is flat in writers at about half its CPU: `exec` is `exclusive` (`src/commands/cmd_txn.cc:133`), the transaction is one global `txn_write_batch_` on `Storage` committed with `sync` inside the exclusive section (`src/storage/storage.cc` BeginTxn/CommitTxn), so every JuiceFS write transaction holds the whole server through its fsync. Not configurable. Lua scripts are not wrapped in that batch: each writing `redis.call` commits separately (`src/storage/scripting.cc`), so moving writes into Lua would lose crash atomicity. One process writing into 8 directories (`results/vm/write-ceiling-hotdir*`) caps both Valkey (876) and Kvrocks (560) because the client serialises transactions per inode (`txLock`, 1 024 stripes).

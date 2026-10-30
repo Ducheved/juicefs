@@ -1,0 +1,22 @@
+2026/10/30 17:39:13.904727 juicefs[82050] <INFO>: Meta address: postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable [NewClient@interface.go:686]
+2026/10/30 17:39:14.003705 juicefs[82050] <INFO>: Create session 16 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 17:40:15.594488 juicefs[82050] <WARNING>: Already tried 50 times, returning: failed to connect to `user=postgres database=jfs`: 127.0.0.1:5433 (127.0.0.1): dial error: dial tcp 127.0.0.1:5433: connect: connection refused [simpleTxn@sql.go:1463]
+2026/10/30 17:40:15.594567 juicefs[82050] <WARNING>: delete chunks of inode 138325 length 0: find chunks: failed to connect to `user=postgres database=jfs`: 127.0.0.1:5433 (127.0.0.1): dial error: dial tcp 127.0.0.1:5433: connect: connection refused [doDeleteFileData@sql.go:3980]
+2026/10/30 17:40:15.594482 juicefs[82050] <WARNING>: Already tried 50 times, returning: failed to connect to `user=postgres database=jfs`: 127.0.0.1:5433 (127.0.0.1): dial error: dial tcp 127.0.0.1:5433: connect: connection refused [txn@sql.go:1366]
+2026/10/30 17:40:15.594652 juicefs[82050] <ERROR>: error: failed to connect to `user=postgres database=jfs`: 127.0.0.1:5433 (127.0.0.1): dial error: dial tcp 127.0.0.1:5433: connect: connection refused
+goroutine 75 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+github.com/juicedata/juicefs/pkg/meta.errno({0x44966e0, 0xc000d165e8})
+	/srv/stand/src/pkg/meta/utils.go:164 +0x185
+github.com/juicedata/juicefs/pkg/meta.(*dbMeta).doMknod(0x44fe998?, {0x44fe998?, 0xc000679b00?}, 0x1?, {0xc002023a60?, 0x41fe86?}, 0x78?, 0x1a4, 0x0?, {0x0, ...}, ...)
+	/srv/stand/src/pkg/meta/sql.go:1890 +0xef
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Mknod(0xc00074af08, {0x44fe998, 0xc000679b00}, 0x26c, {0xc002023a60, 0xf}, 0x1, 0x1a4, 0x0, 0x0, ...)
+	/srv/stand/src/pkg/meta/base.go:1705 +0x4f8
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Create(0xc00074af08, {0x44fe998?, 0xc000679b00?}, 0x0?, {0xc002023a60?, 0x0?}, 0x0?, 0x0?, 0x0, 0xc002023a70, ...)
+	/srv/stand/src/pkg/meta/base.go:1719 +0x10b
+main.main.func2(0x15)
+	/srv/stand/src/rnd/mixload/main.go:125 +0x43a
+created by main.main in goroutine 1
+	/srv/stand/src/rnd/mixload/main.go:115 +0x8bf [errno@utils.go:164]
+2026-10-30 17:40:15.594674 I | create: input/output error

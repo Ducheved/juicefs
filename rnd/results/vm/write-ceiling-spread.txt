@@ -1,0 +1,10 @@
+label=spread users=8 dirs=64 files=20 procs=4 engine_cpus=0-1 load_cpus=2-3
+engine=valkey writers=4 procs=4 cycles_per_s=660 p50_us_max=2914 p99_us_max=4684 engine_cores=0.27 loader_cores=0.43 engine_cpu_us_per_cycle=405
+engine=valkey writers=16 procs=4 cycles_per_s=1257 p50_us_max=5681 p99_us_max=12816 engine_cores=0.35 loader_cores=0.64 engine_cpu_us_per_cycle=280
+engine=valkey writers=64 procs=4 cycles_per_s=2833 p50_us_max=9287 p99_us_max=32213 engine_cores=0.61 loader_cores=1.08 engine_cpu_us_per_cycle=215
+engine=valkey writers=256 procs=4 cycles_per_s=3723 p50_us_max=21550 p99_us_max=169366 engine_cores=0.84 loader_cores=1.46 engine_cpu_us_per_cycle=226
+engine=kvrocks writers=4 procs=4 cycles_per_s=549 p50_us_max=4554 p99_us_max=7441 engine_cores=0.48 loader_cores=0.39 engine_cpu_us_per_cycle=881
+engine=kvrocks writers=16 procs=4 cycles_per_s=550 p50_us_max=13263 p99_us_max=47288 engine_cores=0.47 loader_cores=0.35 engine_cpu_us_per_cycle=859
+engine=kvrocks writers=64 procs=4 cycles_per_s=539 p50_us_max=43651 p99_us_max=265829 engine_cores=0.45 loader_cores=0.33 engine_cpu_us_per_cycle=838
+engine=kvrocks writers=256 procs=4 cycles_per_s=444 p50_us_max=186490 p99_us_max=1829181 engine_cores=0.44 loader_cores=0.32 engine_cpu_us_per_cycle=998
+== done 17:36:17

@@ -1,0 +1,26 @@
+mem=2G cpus=0-1,2-3
+gen-0 rc=0 peak_mb=826 oom_kills=0 process_cpu_us=160492302
+round=0 files=1000000 gen_s=426 dir_bytes=2399868269 b_per_file=2399 sst_bytes=117117837 vlog_bytes=2147483646
+r0-hot10k rc=0 peak_mb=365 oom_kills=0 process_cpu_us=3013468
+r0-hot10k {"create_p50_us":518,"create_p99_us":988,"label":"r0-hot10k","stat_p50_us":39,"stat_p99_us":125}
+r0-all rc=0 peak_mb=202 oom_kills=0 process_cpu_us=2016215
+r0-all {"create_p50_us":506,"create_p99_us":1069,"label":"r0-all","stat_p50_us":61,"stat_p99_us":180}
+gen-1 rc=0 peak_mb=1472 oom_kills=0 process_cpu_us=167848592
+round=1 files=2000000 gen_s=424 dir_bytes=2516351458 b_per_file=1258 sst_bytes=233598617 vlog_bytes=2147483666
+r1-hot10k rc=0 peak_mb=377 oom_kills=0 process_cpu_us=2894025
+r1-hot10k {"create_p50_us":518,"create_p99_us":1085,"label":"r1-hot10k","stat_p50_us":41,"stat_p99_us":109}
+r1-all rc=0 peak_mb=208 oom_kills=0 process_cpu_us=2058452
+r1-all {"create_p50_us":504,"create_p99_us":964,"label":"r1-all","stat_p50_us":63,"stat_p99_us":139}
+gen-2 rc=0 peak_mb=1576 oom_kills=0 process_cpu_us=172026482
+round=2 files=3000000 gen_s=425 dir_bytes=2632252908 b_per_file=877 sst_bytes=349497638 vlog_bytes=2147483666
+r2-hot10k rc=0 peak_mb=383 oom_kills=0 process_cpu_us=2892364
+r2-hot10k {"create_p50_us":507,"create_p99_us":968,"label":"r2-hot10k","stat_p50_us":41,"stat_p99_us":106}
+r2-all rc=0 peak_mb=211 oom_kills=0 process_cpu_us=2108406
+r2-all {"create_p50_us":501,"create_p99_us":963,"label":"r2-all","stat_p50_us":70,"stat_p99_us":143}
+gen-3 rc=0 peak_mb=1963 oom_kills=0 process_cpu_us=177963545
+round=3 files=4000000 gen_s=430 dir_bytes=2748137239 b_per_file=687 sst_bytes=465379262 vlog_bytes=2147483666
+r3-hot10k rc=0 peak_mb=302 oom_kills=0 process_cpu_us=2951055
+r3-hot10k {"create_p50_us":493,"create_p99_us":1033,"label":"r3-hot10k","stat_p50_us":48,"stat_p99_us":114}
+r3-all rc=0 peak_mb=213 oom_kills=0 process_cpu_us=2270434
+r3-all {"create_p50_us":536,"create_p99_us":1013,"label":"r3-all","stat_p50_us":73,"stat_p99_us":177}
+== done 17:19:21

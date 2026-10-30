@@ -1,0 +1,1 @@
+{"create":{"ops":9287,"ops_per_s":309.56666666666666,"p50_us":5045,"p99_us":17352},"label":"pg-w16-p2","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}}

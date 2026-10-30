@@ -1,0 +1,5 @@
+label=spread users=8 dirs=64 files=20 procs=4 engine_cpus=0-1 load_cpus=2-3
+engine=pg writers=4 procs=4 cycles_per_s=1126 p50_us_max=1462 p99_us_max=3902 engine_cores=1.20 loader_cores=1.74 engine_cpu_us_per_cycle=1070
+engine=pg writers=16 procs=4 cycles_per_s=1238 p50_us_max=5105 p99_us_max=17352 engine_cores=1.96 loader_cores=1.70 engine_cpu_us_per_cycle=1581
+engine=pg writers=64 procs=4 cycles_per_s=936 p50_us_max=16959 p99_us_max=430547 engine_cores=2.06 loader_cores=1.38 engine_cpu_us_per_cycle=2200
+awk: fatal: cannot open file `/sys/fs/cgroup/system.slice/docker-f329280aea4e21ce744736941973ad4cecbabc197c0bb62d1a09d8a92bd90ed7.scope/cpu.stat' for reading: No such file or directory

@@ -1,0 +1,14 @@
+image=apache/kvrocks:2.17.0 mem=192m cache_mb=64 engine_cpus=0-1 load_cpus=2-3
+round=0 files=1000000 gen_s=1316 gen_server_cpu_s=554 sst_bytes=251037465 sst_b_per_file=251 wal_bytes=662564796 cg_now_mb=156 cg_peak_mb=192 rss_mb=139 oom_kills=0
+r0-hot10k {"create_p50_us":925,"create_p99_us":1237,"label":"r0-hot10k","stat_p50_us":577,"stat_p99_us":1169} server_cpu_us_per_op=589
+r0-all {"create_p50_us":939,"create_p99_us":1260,"label":"r0-all","stat_p50_us":717,"stat_p99_us":1626} server_cpu_us_per_op=640
+round=1 files=2000000 gen_s=1322 gen_server_cpu_s=584 sst_bytes=500927230 sst_b_per_file=250 wal_bytes=1340834131 cg_now_mb=172 cg_peak_mb=192 rss_mb=130 oom_kills=0
+r1-hot10k {"create_p50_us":927,"create_p99_us":1178,"label":"r1-hot10k","stat_p50_us":666,"stat_p99_us":1661} server_cpu_us_per_op=607
+r1-all {"create_p50_us":925,"create_p99_us":1295,"label":"r1-all","stat_p50_us":1183,"stat_p99_us":1910} server_cpu_us_per_op=676
+round=2 files=3000000 gen_s=1339 gen_server_cpu_s=632 sst_bytes=755830538 sst_b_per_file=251 wal_bytes=2019164882 cg_now_mb=167 cg_peak_mb=192 rss_mb=128 oom_kills=0
+r2-hot10k {"create_p50_us":920,"create_p99_us":1154,"label":"r2-hot10k","stat_p50_us":639,"stat_p99_us":1162} server_cpu_us_per_op=595
+r2-all {"create_p50_us":959,"create_p99_us":1354,"label":"r2-all","stat_p50_us":1322,"stat_p99_us":2165} server_cpu_us_per_op=684
+round=3 files=4000000 gen_s=1313 gen_server_cpu_s=571 sst_bytes=1009924038 sst_b_per_file=252 wal_bytes=2697337546 cg_now_mb=190 cg_peak_mb=192 rss_mb=134 oom_kills=0
+r3-hot10k {"create_p50_us":939,"create_p99_us":1371,"label":"r3-hot10k","stat_p50_us":711,"stat_p99_us":1732} server_cpu_us_per_op=713
+r3-all {"create_p50_us":978,"create_p99_us":1413,"label":"r3-all","stat_p50_us":1416,"stat_p99_us":2269} server_cpu_us_per_op=717
+== done 15:45:40 oom_kills=0

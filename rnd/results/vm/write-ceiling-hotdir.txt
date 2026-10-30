@@ -1,0 +1,13 @@
+engine=valkey engine_cpus=0-1 load_cpus=2-3
+writers=1 {"create":{"ops":13770,"ops_per_s":459,"p50_us":1297,"p99_us":1541},"label":"valkey-w1","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.23 engine_cpu_us_per_cycle=498
+writers=4 {"create":{"ops":19797,"ops_per_s":659.9,"p50_us":2869,"p99_us":8120},"label":"valkey-w4","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.26 engine_cpu_us_per_cycle=389
+writers=16 {"create":{"ops":23858,"ops_per_s":795.2666666666667,"p50_us":9603,"p99_us":30754},"label":"valkey-w16","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.27 engine_cpu_us_per_cycle=343
+writers=64 {"create":{"ops":25432,"ops_per_s":847.7333333333333,"p50_us":27812,"p99_us":133527},"label":"valkey-w64","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.27 engine_cpu_us_per_cycle=316
+writers=256 {"create":{"ops":26280,"ops_per_s":876,"p50_us":111318,"p99_us":547713},"label":"valkey-w256","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.28 engine_cpu_us_per_cycle=315
+engine=kvrocks engine_cpus=0-1 load_cpus=2-3
+writers=1 {"create":{"ops":12748,"ops_per_s":424.93333333333334,"p50_us":1330,"p99_us":1668},"label":"kvrocks-w1","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.33 engine_cpu_us_per_cycle=769
+writers=4 {"create":{"ops":16128,"ops_per_s":537.6,"p50_us":3599,"p99_us":10748},"label":"kvrocks-w4","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.44 engine_cpu_us_per_cycle=818
+writers=16 {"create":{"ops":16394,"ops_per_s":546.4666666666667,"p50_us":11806,"p99_us":53994},"label":"kvrocks-w16","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.43 engine_cpu_us_per_cycle=781
+writers=64 {"create":{"ops":16516,"ops_per_s":550.5333333333333,"p50_us":41694,"p99_us":225689},"label":"kvrocks-w64","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.42 engine_cpu_us_per_cycle=771
+writers=256 {"create":{"ops":16799,"ops_per_s":559.9666666666667,"p50_us":188901,"p99_us":612257},"label":"kvrocks-w256","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}} engine_cores=0.48 engine_cpu_us_per_cycle=863
+== done 17:24:59

@@ -1,0 +1,1 @@
+{"create":{"ops":9444,"ops_per_s":314.8,"p50_us":5680,"p99_us":12141},"label":"valkey-w16-p2","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}}

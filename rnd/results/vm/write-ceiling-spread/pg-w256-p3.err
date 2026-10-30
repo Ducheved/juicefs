@@ -1,0 +1,17 @@
+2026/10/30 17:39:13.906959 juicefs[82052] <INFO>: Meta address: postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable [NewClient@interface.go:686]
+2026/10/30 17:39:14.006285 juicefs[82052] <INFO>: Create session 15 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 17:39:35.216843 juicefs[82052] <ERROR>: error: read tcp 127.0.0.1:38840->127.0.0.1:5433: read: connection reset by peer
+goroutine 97 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+github.com/juicedata/juicefs/pkg/meta.errno({0x4495fe0, 0xc001c1f130})
+	/srv/stand/src/pkg/meta/utils.go:164 +0x185
+github.com/juicedata/juicefs/pkg/meta.(*dbMeta).doUnlink(0xc00066bb40, {0x44fe998, 0xc000b84740}, 0x7cc, {0xc001caa4d0, 0xf}, 0xc0009b06c0, {0x0, 0x0, 0x0})
+	/srv/stand/src/pkg/meta/sql.go:2312 +0x349
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Unlink(0xc00048b908, {0x44fe998, 0xc000b84740}, 0x7cc, {0xc001caa4d0, 0xf}, {0x0, 0x0, 0x0})
+	/srv/stand/src/pkg/meta/base.go:1855 +0x291
+main.main.func2(0x2e)
+	/srv/stand/src/rnd/mixload/main.go:130 +0x5d0
+created by main.main in goroutine 1
+	/srv/stand/src/rnd/mixload/main.go:115 +0x8bf [errno@utils.go:164]
+2026-10-30 17:39:35.216882 I | unlink: input/output error

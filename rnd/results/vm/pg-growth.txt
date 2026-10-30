@@ -1,0 +1,15 @@
+NOTICE:  database "jfs" does not exist, skipping
+image=ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie@sha256:ebf3919504d7523a63e8e2fee9b051211de714644b36469275558c624afd50ec mem=192m engine_cpus=0-1 load_cpus=2-3 shared_buffers=64MB fsync=on synchronous_commit=on io_method=worker version=18.4 (Debian 18.4-1.pgdg13+1)
+round=0 files=1000000 gen_s=450 gen_server_cpu_s=842 db_bytes=649836223 db_b_per_file=649 wal_bytes=1056964608 cg_now_mb=182 cg_peak_mb=192 oom_kills=0
+r0-hot10k {"create_p50_us":853,"create_p99_us":1463,"label":"r0-hot10k","stat_p50_us":401,"stat_p99_us":1435} server_cpu_us_per_op=624
+r0-all {"create_p50_us":1155,"create_p99_us":2038,"label":"r0-all","stat_p50_us":1570,"stat_p99_us":3318} server_cpu_us_per_op=873
+round=1 files=2000000 gen_s=453 gen_server_cpu_s=852 db_bytes=1278998207 db_b_per_file=639 wal_bytes=1056964608 cg_now_mb=183 cg_peak_mb=192 oom_kills=0
+r1-hot10k {"create_p50_us":840,"create_p99_us":1394,"label":"r1-hot10k","stat_p50_us":404,"stat_p99_us":1405} server_cpu_us_per_op=621
+r1-all {"create_p50_us":1194,"create_p99_us":2097,"label":"r1-all","stat_p50_us":1771,"stat_p99_us":4708} server_cpu_us_per_op=888
+round=2 files=3000000 gen_s=456 gen_server_cpu_s=858 db_bytes=1913558719 db_b_per_file=637 wal_bytes=1056964608 cg_now_mb=182 cg_peak_mb=192 oom_kills=0
+r2-hot10k {"create_p50_us":849,"create_p99_us":1410,"label":"r2-hot10k","stat_p50_us":405,"stat_p99_us":1299} server_cpu_us_per_op=630
+r2-all {"create_p50_us":1187,"create_p99_us":1951,"label":"r2-all","stat_p50_us":1864,"stat_p99_us":3067} server_cpu_us_per_op=895
+round=3 files=4000000 gen_s=456 gen_server_cpu_s=856 db_bytes=2516793023 db_b_per_file=629 wal_bytes=1056964608 cg_now_mb=184 cg_peak_mb=192 oom_kills=0
+r3-hot10k {"create_p50_us":862,"create_p99_us":1406,"label":"r3-hot10k","stat_p50_us":410,"stat_p99_us":1316} server_cpu_us_per_op=645
+r3-all {"create_p50_us":1206,"create_p99_us":2076,"label":"r3-all","stat_p50_us":1908,"stat_p99_us":3814} server_cpu_us_per_op=908
+== done 16:17:33 oom_kills=0

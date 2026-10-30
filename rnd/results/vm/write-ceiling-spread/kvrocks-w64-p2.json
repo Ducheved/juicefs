@@ -1,0 +1,1 @@
+{"create":{"ops":3905,"ops_per_s":130.16666666666666,"p50_us":43510,"p99_us":264773},"label":"kvrocks-w64-p2","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}}

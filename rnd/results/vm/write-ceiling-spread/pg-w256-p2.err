@@ -1,0 +1,19 @@
+2026/10/30 17:39:13.872844 juicefs[82051] <INFO>: Meta address: postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable [NewClient@interface.go:686]
+2026/10/30 17:39:13.961605 juicefs[82051] <INFO>: Create session 14 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 17:39:35.305362 juicefs[82051] <ERROR>: error: unexpected EOF
+goroutine 104 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+github.com/juicedata/juicefs/pkg/meta.errno({0x44948c0, 0x648d350})
+	/srv/stand/src/pkg/meta/utils.go:164 +0x185
+github.com/juicedata/juicefs/pkg/meta.(*dbMeta).doMknod(0x44fe998?, {0x44fe998?, 0xc0004077c0?}, 0x1?, {0xc001fafea0?, 0x41fe86?}, 0x78?, 0x1a4, 0x0?, {0x0, ...}, ...)
+	/srv/stand/src/pkg/meta/sql.go:1890 +0xef
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Mknod(0xc000b04008, {0x44fe998, 0xc0004077c0}, 0x100a, {0xc001fafea0, 0xf}, 0x1, 0x1a4, 0x0, 0x0, ...)
+	/srv/stand/src/pkg/meta/base.go:1705 +0x4f8
+github.com/juicedata/juicefs/pkg/meta.(*baseMeta).Create(0xc000b04008, {0x44fe998?, 0xc0004077c0?}, 0x0?, {0xc001fafea0?, 0x0?}, 0x0?, 0x0?, 0x0, 0xc001fafeb0, ...)
+	/srv/stand/src/pkg/meta/base.go:1719 +0x10b
+main.main.func2(0x31)
+	/srv/stand/src/rnd/mixload/main.go:125 +0x43a
+created by main.main in goroutine 1
+	/srv/stand/src/rnd/mixload/main.go:115 +0x8bf [errno@utils.go:164]
+2026-10-30 17:39:35.305404 I | create: input/output error

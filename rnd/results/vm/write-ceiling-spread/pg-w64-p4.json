@@ -1,0 +1,1 @@
+{"create":{"ops":7181,"ops_per_s":239.36666666666667,"p50_us":16679,"p99_us":96873},"label":"pg-w64-p4","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}}

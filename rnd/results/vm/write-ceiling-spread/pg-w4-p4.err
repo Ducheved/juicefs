@@ -1,0 +1,4 @@
+2026/10/30 17:37:41.803739 juicefs[77180] <INFO>: Meta address: postgres://postgres@127.0.0.1:5433/jfs?sslmode=disable [NewClient@interface.go:686]
+2026/10/30 17:37:41.905772 juicefs[77180] <INFO>: Create session 4 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 17:38:12.057699 juicefs[77180] <INFO>: flush session 4: [FlushSession@base.go:1048]
+2026/10/30 17:38:12.061037 juicefs[77180] <INFO>: close session 4: <nil> [CloseSession@base.go:1037]

@@ -1,0 +1,7 @@
+2026/10/30 16:57:34.096298 juicefs[65288] <INFO>: Meta address: badger:///srv/stand/stand/badger-growth?sync=true [NewClient@interface.go:686]
+2026/10/30 16:57:34.902944 badger[65288] <INFO>: All 39 tables opened in 1ms [Infof@logger.go:35]
+2026/10/30 16:57:34.903908 badger[65288] <INFO>: Discard stats nextEmptySlot: 0 [Infof@logger.go:35]
+2026/10/30 16:57:34.903954 badger[65288] <INFO>: Set nextTxnTs to 2013698 [Infof@logger.go:35]
+2026/10/30 16:57:34.908127 juicefs[65288] <INFO>: Create session 2 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 16:57:38.005316 juicefs[65288] <INFO>: flush session 2: [FlushSession@base.go:1048]
+2026/10/30 16:57:38.005755 juicefs[65288] <INFO>: close session 2: <nil> [CloseSession@base.go:1037]

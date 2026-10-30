@@ -1,0 +1,6 @@
+sudo: unable to resolve host jfs-bench: Name or service not known
+image=valkey/valkey:9.1.1@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd mem=4g maxmemory=2gb engine_cpus=0-1 load_cpus=2-3
+round=0 files=1000000 gen_s=476 gen_server_cpu_s=184 used_memory=238100160 b_per_file=238 rss=259272704 keys=2020212 aof_bytes=180675364 cg_now_mb=304 cg_peak_mb=304 oom_kills=0
+r0-hot10k {"create_p50_us":824,"create_p99_us":1113,"label":"r0-hot10k","stat_p50_us":214,"stat_p99_us":373} server_cpu_us_per_op=349
+r0-all {"create_p50_us":813,"create_p99_us":1117,"label":"r0-all","stat_p50_us":211,"stat_p99_us":307} server_cpu_us_per_op=347
+== done 14:15:06 oom_kills=0
