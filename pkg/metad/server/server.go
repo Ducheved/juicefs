@@ -19,6 +19,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -30,6 +31,7 @@ import (
 	"github.com/google/btree"
 	"github.com/juicedata/juicefs/pkg/metad/proto"
 	"github.com/juicedata/juicefs/pkg/utils"
+	"go.etcd.io/raft/v3"
 )
 
 var logger = utils.GetLogger("juicefs")
@@ -40,6 +42,11 @@ type Options struct {
 	MemtableMB  uint64
 	SnapshotTTL time.Duration
 	MaxBatch    int
+	ID          uint64
+	Peers       map[uint64]string
+	Tick        time.Duration
+	LogRetain   uint64
+	DedupWindow time.Duration
 }
 
 type snapshot struct {
@@ -50,8 +57,9 @@ type snapshot struct {
 }
 
 type written struct {
-	key []byte
-	seq uint64
+	key     []byte
+	seq     uint64
+	pending int
 }
 
 type batchKeys struct {
@@ -60,25 +68,38 @@ type batchKeys struct {
 }
 
 type request struct {
-	commit *proto.Commit
-	begin  []byte
-	end    []byte
-	done   chan byte
+	commit  *proto.Commit
+	resolve []byte
+	done    chan byte
 }
 
 type Server struct {
 	opts    Options
 	db      *pebble.DB
 	cache   *pebble.Cache
+	log     *logStore
+	node    raft.Node
+	peers   map[uint64]*peer
 	pending chan *request
+	applyMu sync.Mutex
+	install sync.Mutex
 
 	mu        sync.Mutex
-	committed uint64
+	applied   uint64
+	lastTime  int64
+	term      uint64
+	lead      uint64
+	leader    bool
+	ready     bool
+	base      uint64
 	current   *snapshot
 	snapshots map[uint64]*snapshot
 	recent    *btree.BTreeG[written]
 	history   []batchKeys
 	floor     uint64
+	prop      uint64
+	waiters   map[uint64][]*request
+	closed    bool
 
 	connMu sync.Mutex
 	conns  map[net.Conn]struct{}
@@ -88,8 +109,11 @@ type Server struct {
 }
 
 func Open(opts Options) (*Server, error) {
-	if opts.CacheMB <= 0 || opts.MemtableMB == 0 || opts.SnapshotTTL <= 0 || opts.MaxBatch <= 0 {
+	if opts.CacheMB <= 0 || opts.MemtableMB == 0 || opts.SnapshotTTL <= 0 || opts.MaxBatch <= 0 || opts.Tick <= 0 || opts.LogRetain == 0 || opts.DedupWindow <= 0 {
 		return nil, fmt.Errorf("metad: invalid options %+v", opts)
+	}
+	if _, ok := opts.Peers[opts.ID]; !ok || opts.ID == 0 {
+		return nil, fmt.Errorf("metad: node %d is not among peers %v", opts.ID, opts.Peers)
 	}
 	cache := pebble.NewCache(opts.CacheMB << 20)
 	po := &pebble.Options{Cache: cache, MemTableSize: opts.MemtableMB << 20, MemTableStopWritesThreshold: 4}
@@ -106,17 +130,20 @@ func Open(opts Options) (*Server, error) {
 		opts:      opts,
 		db:        db,
 		cache:     cache,
+		peers:     make(map[uint64]*peer),
 		pending:   make(chan *request, 4*opts.MaxBatch),
-		committed: 1,
 		snapshots: make(map[uint64]*snapshot),
 		recent:    btree.NewG(32, func(a, b written) bool { return bytes.Compare(a.key, b.key) < 0 }),
-		floor:     1,
+		prop:      uint64(time.Now().UnixNano()),
+		waiters:   make(map[uint64][]*request),
 		conns:     make(map[net.Conn]struct{}),
 		stop:      make(chan struct{}),
 	}
-	s.wg.Add(2)
-	go s.commitLoop()
-	go s.expireLoop()
+	if err := s.start(); err != nil {
+		_ = db.Close()
+		cache.Unref()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -142,6 +169,7 @@ func (s *Server) Serve(ln net.Listener) error {
 
 func (s *Server) Close() error {
 	close(s.stop)
+	s.node.Stop()
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}
@@ -156,6 +184,7 @@ func (s *Server) Close() error {
 		_ = sn.snap.Close()
 	}
 	s.snapshots = nil
+	s.closed = true
 	s.mu.Unlock()
 	err := s.db.Close()
 	s.cache.Unref()
@@ -177,7 +206,15 @@ func (s *Server) handle(c net.Conn) {
 		if err != nil {
 			return
 		}
-		resp := s.dispatch(op, body)
+		var resp []byte
+		if op == proto.OpSnapshot {
+			resp = s.receiveSnapshot(body, r)
+		} else {
+			resp = s.dispatch(op, body)
+		}
+		if resp == nil {
+			continue
+		}
 		if _, err = w.Write(resp); err == nil {
 			err = w.Flush()
 		}
@@ -192,6 +229,17 @@ func failure(status byte, err error) []byte {
 	e.Bytes([]byte(err.Error()))
 	return e.Frame()
 }
+
+func (s *Server) notLeader() []byte {
+	s.mu.Lock()
+	hint := s.opts.Peers[s.lead]
+	s.mu.Unlock()
+	e := proto.NewEncoder(proto.StatusNotLeader)
+	e.Bytes([]byte(hint))
+	return e.Frame()
+}
+
+var errNotLeader = errors.New("metad: not the leader")
 
 func (s *Server) dispatch(op byte, body []byte) []byte {
 	switch op {
@@ -209,18 +257,37 @@ func (s *Server) dispatch(op byte, body []byte) []byte {
 		return s.submit(&request{commit: c})
 	case proto.OpDeleteRange:
 		d := proto.NewDecoder(body)
-		begin, end := d.Bytes(), d.Bytes()
+		id, begin, end := d.Bytes(), d.Bytes(), d.Bytes()
 		if err := d.Err(); err != nil {
 			return failure(proto.StatusError, err)
 		}
-		return s.submit(&request{begin: begin, end: end})
+		if len(id) != proto.TxnIDSize {
+			return failure(proto.StatusError, fmt.Errorf("metad: transaction id of %d bytes", len(id)))
+		}
+		return s.submit(&request{commit: &proto.Commit{ID: id, Writes: []proto.Write{{Op: proto.WriteDeleteRange, Key: begin, Value: end}}}})
+	case proto.OpResolve:
+		d := proto.NewDecoder(body)
+		id := d.Bytes()
+		if err := d.Err(); err != nil {
+			return failure(proto.StatusError, err)
+		}
+		if len(id) != proto.TxnIDSize {
+			return failure(proto.StatusError, fmt.Errorf("metad: transaction id of %d bytes", len(id)))
+		}
+		return s.submit(&request{resolve: id})
 	case proto.OpPing:
 		s.mu.Lock()
-		seq := s.committed
+		ready, seq := s.ready, s.applied
 		s.mu.Unlock()
+		if !ready {
+			return s.notLeader()
+		}
 		e := proto.NewEncoder(proto.StatusOK)
 		e.U64(seq)
 		return e.Frame()
+	case proto.OpRaft:
+		s.step(body)
+		return nil
 	default:
 		return failure(proto.StatusError, fmt.Errorf("unknown op %d", op))
 	}
@@ -229,17 +296,20 @@ func (s *Server) dispatch(op byte, body []byte) []byte {
 func (s *Server) acquire(seq uint64) (*snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.snapshots == nil {
+	if s.closed {
 		return nil, errors.New("metad: closed")
+	}
+	if !s.ready {
+		return nil, errNotLeader
 	}
 	var sn *snapshot
 	if seq == 0 {
-		if s.current == nil || s.current.seq != s.committed {
-			s.current = &snapshot{seq: s.committed, snap: s.db.NewSnapshot()}
+		if s.current == nil || s.current.seq != s.applied {
+			s.current = &snapshot{seq: s.applied, snap: s.db.NewSnapshot()}
 			s.snapshots[s.current.seq] = s.current
 		}
 		sn = s.current
-	} else if sn = s.snapshots[seq]; sn == nil {
+	} else if sn = s.snapshots[seq]; sn == nil || seq < s.base {
 		return nil, proto.ErrSnapshotGone
 	}
 	sn.refs++
@@ -254,7 +324,10 @@ func (s *Server) release(sn *snapshot) {
 	s.mu.Unlock()
 }
 
-func readFailure(err error) []byte {
+func (s *Server) readFailure(err error) []byte {
+	if errors.Is(err, errNotLeader) {
+		return s.notLeader()
+	}
 	if errors.Is(err, proto.ErrSnapshotGone) {
 		return failure(proto.StatusSnapshotGone, err)
 	}
@@ -265,7 +338,7 @@ func (s *Server) get(body []byte) []byte {
 	d := proto.NewDecoder(body)
 	seq := d.U64()
 	n := d.U32()
-	keys := make([][]byte, 0, n)
+	keys := make([][]byte, 0, min(n, proto.ScanLimit))
 	for i := uint32(0); i < n && d.Valid(); i++ {
 		keys = append(keys, d.Bytes())
 	}
@@ -274,13 +347,13 @@ func (s *Server) get(body []byte) []byte {
 	}
 	sn, err := s.acquire(seq)
 	if err != nil {
-		return readFailure(err)
+		return s.readFailure(err)
 	}
 	defer s.release(sn)
 	e := proto.NewEncoder(proto.StatusOK)
 	e.U64(sn.seq)
 	for _, k := range keys {
-		if err := read(sn, k, e); err != nil {
+		if err := read(sn, userKey(k), e); err != nil {
 			return failure(proto.StatusError, err)
 		}
 	}
@@ -310,12 +383,12 @@ func (s *Server) lookup(body []byte) []byte {
 	}
 	sn, err := s.acquire(seq)
 	if err != nil {
-		return readFailure(err)
+		return s.readFailure(err)
 	}
 	defer s.release(sn)
 	e := proto.NewEncoder(proto.StatusOK)
 	e.U64(sn.seq)
-	v, closer, err := sn.snap.Get(entry)
+	v, closer, err := sn.snap.Get(userKey(entry))
 	if errors.Is(err, pebble.ErrNotFound) {
 		e.U8(0)
 		return e.Frame()
@@ -330,7 +403,7 @@ func (s *Server) lookup(body []byte) []byte {
 		err = cerr
 	}
 	if err == nil {
-		err = read(sn, target, e)
+		err = read(sn, userKey(target), e)
 	}
 	if err != nil {
 		return failure(proto.StatusError, err)
@@ -352,12 +425,12 @@ func (s *Server) scan(body []byte) []byte {
 	}
 	sn, err := s.acquire(seq)
 	if err != nil {
-		return readFailure(err)
+		return s.readFailure(err)
 	}
 	defer s.release(sn)
-	iopts := &pebble.IterOptions{LowerBound: begin}
+	iopts := &pebble.IterOptions{LowerBound: userKey(begin), UpperBound: userEnd}
 	if len(end) > 0 {
-		iopts.UpperBound = end
+		iopts.UpperBound = userKey(end)
 	}
 	it, err := sn.snap.NewIter(iopts)
 	if err != nil {
@@ -371,7 +444,7 @@ func (s *Server) scan(body []byte) []byte {
 			more = 1
 			break
 		}
-		keys = append(keys, append([]byte(nil), it.Key()...))
+		keys = append(keys, append([]byte(nil), it.Key()[len(userStart):]...))
 		if keysOnly {
 			values = append(values, nil)
 			continue
@@ -407,12 +480,16 @@ func (s *Server) submit(r *request) []byte {
 	select {
 	case status = <-r.done:
 	case <-s.stop:
-		return failure(proto.StatusError, errors.New("metad: closed"))
+		return failure(proto.StatusUnknown, errors.New("metad: closed"))
 	}
-	if status == proto.StatusOK {
+	switch status {
+	case proto.StatusOK:
 		return proto.NewEncoder(proto.StatusOK).Frame()
+	case proto.StatusNotLeader:
+		return s.notLeader()
+	default:
+		return failure(status, fmt.Errorf("commit status %d", status))
 	}
-	return failure(status, fmt.Errorf("commit status %d", status))
 }
 
 func (s *Server) conflicts(c *proto.Commit) byte {
@@ -423,14 +500,14 @@ func (s *Server) conflicts(c *proto.Commit) byte {
 		return proto.StatusSnapshotGone
 	}
 	for _, k := range c.Keys {
-		if w, ok := s.recent.Get(written{key: k}); ok && w.seq > c.Snapshot {
+		if w, ok := s.recent.Get(written{key: k}); ok && (w.pending > 0 || w.seq > c.Snapshot) {
 			return proto.StatusConflict
 		}
 	}
 	for _, r := range c.Ranges {
 		hit := false
 		check := func(w written) bool {
-			hit = w.seq > c.Snapshot
+			hit = w.pending > 0 || w.seq > c.Snapshot
 			return !hit
 		}
 		if len(r.End) == 0 {
@@ -443,6 +520,23 @@ func (s *Server) conflicts(c *proto.Commit) byte {
 		}
 	}
 	return proto.StatusOK
+}
+
+func (s *Server) mark(key []byte) {
+	w, _ := s.recent.Get(written{key: key})
+	w.key = key
+	w.pending++
+	s.recent.ReplaceOrInsert(w)
+}
+
+func (s *Server) settle(key []byte, seq uint64, marked bool) {
+	w, _ := s.recent.Get(written{key: key})
+	w.key = key
+	if marked && w.pending > 0 {
+		w.pending--
+	}
+	w.seq = max(w.seq, seq)
+	s.recent.ReplaceOrInsert(w)
 }
 
 func (s *Server) commitLoop() {
@@ -464,62 +558,73 @@ func (s *Server) commitLoop() {
 				break drain
 			}
 		}
-		s.commitBatch(reqs)
+		s.propose(reqs)
 	}
 }
 
-func (s *Server) commitBatch(reqs []*request) {
-	b := s.db.NewBatch()
-	defer b.Close()
-	status := make([]byte, len(reqs))
-	var keys [][]byte
+func (s *Server) propose(reqs []*request) {
 	s.mu.Lock()
-	seq := s.committed + 1
-	for i, r := range reqs {
+	if !s.ready {
+		s.mu.Unlock()
+		for _, r := range reqs {
+			r.done <- proto.StatusNotLeader
+		}
+		return
+	}
+	d := &entryData{origin: s.opts.ID, term: s.term, time: max(time.Now().UnixNano(), s.lastTime+1)}
+	s.lastTime = d.time
+	var commits, resolves []*request
+	var marked [][]byte
+	for _, r := range reqs {
 		if r.commit == nil {
-			end := r.end
-			if len(end) == 0 {
-				end = bytes.Repeat([]byte{0xff}, 64)
-			}
-			if err := b.DeleteRange(r.begin, end, nil); err != nil {
-				status[i] = proto.StatusError
-			}
+			d.resolves = append(d.resolves, r.resolve)
+			resolves = append(resolves, r)
 			continue
 		}
-		if status[i] = s.conflicts(r.commit); status[i] != proto.StatusOK {
+		if st := s.conflicts(r.commit); st != proto.StatusOK {
+			r.done <- st
 			continue
 		}
 		for _, w := range r.commit.Writes {
-			var err error
-			if w.Op == proto.WriteSet {
-				err = b.Set(w.Key, w.Value, nil)
-			} else {
-				err = b.Delete(w.Key, nil)
+			if w.Op != proto.WriteDeleteRange {
+				s.mark(w.Key)
+				marked = append(marked, w.Key)
 			}
-			if err != nil {
-				status[i] = proto.StatusError
-				break
-			}
-			s.recent.ReplaceOrInsert(written{key: w.Key, seq: seq})
-			keys = append(keys, w.Key)
 		}
+		d.txns = append(d.txns, txnEntry{id: r.commit.ID, writes: r.commit.Writes})
+		commits = append(commits, r)
 	}
-	s.history = append(s.history, batchKeys{seq: seq, keys: keys})
-	s.mu.Unlock()
-	if err := b.Commit(pebble.Sync); err != nil {
-		logger.Errorf("metad: commit batch %d: %s", seq, err)
-		for i := range status {
-			if status[i] == proto.StatusOK {
-				status[i] = proto.StatusError
-			}
-		}
-	} else {
-		s.mu.Lock()
-		s.committed = seq
+	if len(commits)+len(resolves) == 0 {
 		s.mu.Unlock()
+		return
 	}
-	for i, r := range reqs {
-		r.done <- status[i]
+	s.prop++
+	d.prop = s.prop
+	s.waiters[d.prop] = append(commits, resolves...)
+	s.mu.Unlock()
+	err := s.node.Propose(context.Background(), d.encode())
+	if err == nil {
+		return
+	}
+	status := byte(proto.StatusUnknown)
+	if errors.Is(err, raft.ErrProposalDropped) {
+		status = proto.StatusConflict
+	}
+	s.mu.Lock()
+	waiting, ok := s.waiters[d.prop]
+	delete(s.waiters, d.prop)
+	if s.leader && s.term == d.term {
+		seq := s.applied + 1
+		for _, k := range marked {
+			s.settle(k, seq, true)
+		}
+		s.history = append(s.history, batchKeys{seq: seq, keys: marked})
+	}
+	s.mu.Unlock()
+	if ok {
+		for _, r := range waiting {
+			r.done <- status
+		}
 	}
 }
 
@@ -540,7 +645,7 @@ func (s *Server) expireLoop() {
 func (s *Server) expire(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	floor := s.committed
+	floor := s.applied
 	for seq, sn := range s.snapshots {
 		if sn.refs == 0 && now.Sub(sn.last) > s.opts.SnapshotTTL {
 			_ = sn.snap.Close()
@@ -552,14 +657,30 @@ func (s *Server) expire(now time.Time) {
 		}
 		floor = min(floor, sn.seq)
 	}
-	s.floor = floor
+	s.floor = max(floor, s.base)
 	n := 0
-	for ; n < len(s.history) && s.history[n].seq <= floor; n++ {
+	for ; n < len(s.history) && s.history[n].seq <= s.floor; n++ {
 		for _, k := range s.history[n].keys {
-			if w, ok := s.recent.Get(written{key: k}); ok && w.seq == s.history[n].seq {
+			if w, ok := s.recent.Get(written{key: k}); ok && w.pending == 0 && w.seq <= s.floor {
 				s.recent.Delete(w)
 			}
 		}
 	}
 	s.history = append(s.history[:0], s.history[n:]...)
+}
+
+type Status struct {
+	ID      uint64
+	Lead    uint64
+	Term    uint64
+	Applied uint64
+	First   uint64
+	Ready   bool
+}
+
+func (s *Server) Status() Status {
+	first, _ := s.log.FirstIndex()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Status{ID: s.opts.ID, Lead: s.lead, Term: s.term, Applied: s.applied, First: first, Ready: s.ready}
 }

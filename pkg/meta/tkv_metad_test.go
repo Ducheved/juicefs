@@ -17,8 +17,11 @@
 package meta
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,18 +29,85 @@ import (
 	"github.com/juicedata/juicefs/pkg/metad/server"
 )
 
-func startMetad(t *testing.T, ttl time.Duration) string {
-	s, err := server.Open(server.Options{Dir: t.TempDir(), CacheMB: 64, MemtableMB: 8, SnapshotTTL: ttl, MaxBatch: 1024})
-	if err != nil {
-		t.Fatalf("open metad: %s", err)
+type metadCluster struct {
+	t       *testing.T
+	ttl     time.Duration
+	retain  uint64
+	dirs    []string
+	addrs   []string
+	peers   map[uint64]string
+	servers []*server.Server
+}
+
+func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64) *metadCluster {
+	c := &metadCluster{t: t, ttl: ttl, retain: retain, peers: make(map[uint64]string), servers: make([]*server.Server, n)}
+	lns := make([]net.Listener, n)
+	for i := range lns {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %s", err)
+		}
+		lns[i] = ln
+		c.dirs = append(c.dirs, t.TempDir())
+		c.addrs = append(c.addrs, ln.Addr().String())
+		c.peers[uint64(i+1)] = ln.Addr().String()
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %s", err)
+	for i, ln := range lns {
+		c.serve(i, ln)
 	}
+	t.Cleanup(func() {
+		for i := range c.servers {
+			c.stop(i)
+		}
+	})
+	return c
+}
+
+func (c *metadCluster) serve(i int, ln net.Listener) {
+	s, err := server.Open(server.Options{Dir: c.dirs[i], CacheMB: 64, MemtableMB: 8, SnapshotTTL: c.ttl, MaxBatch: 1024,
+		ID: uint64(i + 1), Peers: c.peers, Tick: 20 * time.Millisecond, LogRetain: c.retain, DedupWindow: time.Minute})
+	if err != nil {
+		c.t.Fatalf("open metad %d: %s", i+1, err)
+	}
+	c.servers[i] = s
 	go func() { _ = s.Serve(ln) }()
-	t.Cleanup(func() { _ = s.Close() })
-	return ln.Addr().String()
+}
+
+func (c *metadCluster) stop(i int) {
+	if c.servers[i] != nil {
+		_ = c.servers[i].Close()
+		c.servers[i] = nil
+	}
+}
+
+func (c *metadCluster) start(i int) {
+	ln, err := net.Listen("tcp", c.addrs[i])
+	if err != nil {
+		c.t.Fatalf("listen %s: %s", c.addrs[i], err)
+	}
+	c.serve(i, ln)
+}
+
+func (c *metadCluster) leader() int {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for i, s := range c.servers {
+			if s != nil && s.Status().Ready {
+				return i
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.t.Fatal("no leader")
+	return -1
+}
+
+func (c *metadCluster) url(path string) string {
+	return strings.Join(c.addrs, ",") + path
+}
+
+func startMetad(t *testing.T, ttl time.Duration) string {
+	return newMetadCluster(t, 1, ttl, 1000).url("")
 }
 
 func TestMetadKV(t *testing.T) {
@@ -49,7 +119,7 @@ func TestMetadKV(t *testing.T) {
 }
 
 func TestMetadClient(t *testing.T) {
-	m, err := newKVMeta("metad", startMetad(t, 5*time.Second)+"/jfs-unit-test", testConfig())
+	m, err := newKVMeta("metad", newMetadCluster(t, 3, 5*time.Second, 1000).url("/jfs-unit-test"), testConfig())
 	if err != nil || m.Name() != "metad" {
 		t.Fatalf("create meta: %s", err)
 	}
@@ -183,5 +253,176 @@ func TestMetadTransactions(t *testing.T) {
 	})
 	if !c.shouldRetry(err) {
 		t.Fatalf("expired snapshot: expect a retryable error, got %v", err)
+	}
+}
+
+func metadSet(c tkvClient, key, value string) error {
+	return c.txn(Background(), func(tx *kvTxn) error {
+		tx.get([]byte(key))
+		tx.set([]byte(key), []byte(value))
+		return nil
+	}, 0)
+}
+
+func metadGet(t *testing.T, c tkvClient, key string) string {
+	var v []byte
+	if err := c.simpleTxn(Background(), func(tx *kvTxn) error {
+		v = tx.get([]byte(key))
+		return nil
+	}, 0); err != nil {
+		t.Fatalf("get %s: %s", key, err)
+	}
+	return string(v)
+}
+
+func TestMetadFailover(t *testing.T) {
+	mc := newMetadCluster(t, 3, 5*time.Second, 1000)
+	c, err := newMetadClient(mc.url("/jfs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 3; round++ {
+		for i := 0; i < 50; i++ {
+			if err := metadSet(c, fmt.Sprintf("k%d-%d", round, i), "v"); err != nil {
+				t.Fatalf("round %d set %d: %s", round, i, err)
+			}
+		}
+		old := mc.leader()
+		mc.stop(old)
+		for r := 0; r <= round; r++ {
+			for i := 0; i < 50; i++ {
+				if v := metadGet(t, c, fmt.Sprintf("k%d-%d", r, i)); v != "v" {
+					t.Fatalf("after losing node %d: k%d-%d = %q", old+1, r, i, v)
+				}
+			}
+		}
+		if now := mc.leader(); now == old {
+			t.Fatalf("node %d still leads after stop", old+1)
+		}
+		mc.start(old)
+	}
+}
+
+func TestMetadSnapshotInstall(t *testing.T) {
+	mc := newMetadCluster(t, 3, 5*time.Second, 20)
+	c, err := newMetadClient(mc.url("/jfs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead := mc.leader()
+	lag := (lead + 1) % 3
+	mc.stop(lag)
+	for i := 0; i < 300; i++ {
+		if err := metadSet(c, fmt.Sprintf("s%d", i), fmt.Sprint(i)); err != nil {
+			t.Fatalf("set %d: %s", i, err)
+		}
+	}
+	if first := mc.servers[lead].Status().First; first <= 100 {
+		t.Fatalf("leader log not compacted: first index %d", first)
+	}
+	mc.start(lag)
+	target := mc.servers[lead].Status().Applied
+	deadline := time.Now().Add(10 * time.Second)
+	for mc.servers[lag].Status().Applied < target {
+		if time.Now().After(deadline) {
+			t.Fatalf("node %d stuck at %+v, leader at %d", lag+1, mc.servers[lag].Status(), target)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if st := mc.servers[lag].Status(); st.First <= 100 {
+		t.Fatalf("node %d caught up without a snapshot: %+v", lag+1, st)
+	}
+	mc.stop(lag)
+	mc.start(lag)
+	other := 3 - lead - lag
+	mc.stop(other)
+	for i := 0; i < 300; i += 7 {
+		if v := metadGet(t, c, fmt.Sprintf("s%d", i)); v != fmt.Sprint(i) {
+			t.Fatalf("s%d = %q", i, v)
+		}
+	}
+	mc.stop(lead)
+	mc.start(other)
+	for i := 0; i < 300; i += 7 {
+		if v := metadGet(t, c, fmt.Sprintf("s%d", i)); v != fmt.Sprint(i) {
+			t.Fatalf("without the old leader: s%d = %q", i, v)
+		}
+	}
+}
+
+func metadRaw(t *testing.T, addr string, frame []byte) (byte, error) {
+	cn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cn.Close()
+	if _, err := cn.Write(frame); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := proto.ReadFrame(bufio.NewReader(cn))
+	return status, err
+}
+
+func metadResolve(t *testing.T, addr string, id []byte) byte {
+	e := proto.NewEncoder(proto.OpResolve)
+	e.Bytes(id)
+	status, err := metadRaw(t, addr, e.Frame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func TestMetadResolve(t *testing.T) {
+	mc := newMetadCluster(t, 1, 5*time.Second, 1000)
+	addr := mc.addrs[0]
+	c, err := newMetadClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(id []byte, key string) []byte {
+		return proto.EncodeCommit(&proto.Commit{ID: id, Writes: []proto.Write{{Op: proto.WriteSet, Key: []byte(key), Value: []byte("x")}}})
+	}
+
+	id := newTxnID()
+	if st, err := metadRaw(t, addr, write(id, "r1")); err != nil || st != proto.StatusOK {
+		t.Fatalf("commit r1: %d %v", st, err)
+	}
+	if st := metadResolve(t, addr, id); st != proto.StatusOK {
+		t.Fatalf("resolve of a committed transaction: status %d", st)
+	}
+
+	id = newTxnID()
+	if st := metadResolve(t, addr, id); st != proto.StatusConflict {
+		t.Fatalf("resolve of an unknown transaction: status %d", st)
+	}
+	if st, err := metadRaw(t, addr, write(id, "r2")); err != nil || st != proto.StatusConflict {
+		t.Fatalf("commit after resolve: %d %v", st, err)
+	}
+	if v := metadGet(t, c, "r2"); v != "" {
+		t.Fatalf("aborted transaction applied: r2 = %q", v)
+	}
+
+	for i := 0; i < 20; i++ {
+		id = newTxnID()
+		key := fmt.Sprintf("r3-%d", i)
+		cn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cn.Write(write(id, key)); err != nil {
+			t.Fatal(err)
+		}
+		_ = cn.Close()
+		st := metadResolve(t, addr, id)
+		if v := metadGet(t, c, key); (st == proto.StatusOK) != (v == "x") {
+			t.Fatalf("resolve says %d but %s = %q", st, key, v)
+		}
+	}
+
+	id = newTxnID()
+	err = c.(*metadClient).commit(id, write(id, "r4"))
+	if err != nil || metadGet(t, c, "r4") != "x" {
+		t.Fatalf("client commit: %v", err)
 	}
 }

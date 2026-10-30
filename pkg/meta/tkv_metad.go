@@ -19,12 +19,15 @@ package meta
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/juicedata/juicefs/pkg/metad/proto"
@@ -41,14 +44,21 @@ type metadConn struct {
 	w *bufio.Writer
 }
 
-type metadClient struct {
+type metadPool struct {
 	addr  string
 	idle  chan *metadConn
 	slots chan struct{}
 }
 
+type metadClient struct {
+	pools    []*metadPool
+	leader   atomic.Int32
+	failover time.Duration
+}
+
 func newMetadClient(addr string) (tkvClient, error) {
-	u, err := url.Parse("metad://" + addr)
+	hosts, rest, _ := strings.Cut(addr, "/")
+	u, err := url.Parse("metad://placeholder/" + rest)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %s", addr, err)
 	}
@@ -58,30 +68,41 @@ func newMetadClient(addr string) (tkvClient, error) {
 			return nil, fmt.Errorf("invalid conns %q", v)
 		}
 	}
-	c := &metadClient{addr: u.Host, idle: make(chan *metadConn, conns), slots: make(chan struct{}, conns)}
-	if _, _, err := c.call(proto.NewEncoder(proto.OpPing).Frame()); err != nil {
-		return nil, fmt.Errorf("ping metad %s: %s", u.Host, err)
+	c := &metadClient{failover: 30 * time.Second}
+	if v := u.Query().Get("failover"); v != "" {
+		if c.failover, err = time.ParseDuration(v); err != nil || c.failover <= 0 {
+			return nil, fmt.Errorf("invalid failover %q", v)
+		}
+	}
+	for _, h := range strings.Split(hosts, ",") {
+		if h == "" {
+			return nil, fmt.Errorf("empty address in %s", addr)
+		}
+		c.pools = append(c.pools, &metadPool{addr: h, idle: make(chan *metadConn, conns), slots: make(chan struct{}, conns)})
+	}
+	if _, _, err := c.call(proto.NewEncoder(proto.OpPing).Frame(), true); err != nil {
+		return nil, fmt.Errorf("ping metad %s: %s", hosts, err)
 	}
 	if u.Path == "" || u.Path == "/" {
 		return c, nil
 	}
-	return withPrefix(c, []byte(u.Path+"\xFD")), nil
+	return withPrefix(c, []byte(u.Path+"ý")), nil
 }
 
-func (c *metadClient) conn() (*metadConn, error) {
+func (p *metadPool) conn() (*metadConn, error) {
 	select {
-	case cn := <-c.idle:
+	case cn := <-p.idle:
 		return cn, nil
 	default:
 	}
 	select {
-	case cn := <-c.idle:
+	case cn := <-p.idle:
 		return cn, nil
-	case c.slots <- struct{}{}:
+	case p.slots <- struct{}{}:
 	}
-	nc, err := net.DialTimeout("tcp", c.addr, 5*time.Second)
+	nc, err := net.DialTimeout("tcp", p.addr, time.Second)
 	if err != nil {
-		<-c.slots
+		<-p.slots
 		return nil, err
 	}
 	if tc, ok := nc.(*net.TCPConn); ok {
@@ -90,15 +111,15 @@ func (c *metadClient) conn() (*metadConn, error) {
 	return &metadConn{nc, bufio.NewReaderSize(nc, 64<<10), bufio.NewWriterSize(nc, 64<<10)}, nil
 }
 
-func (c *metadClient) discard(cn *metadConn) {
+func (p *metadPool) discard(cn *metadConn) {
 	_ = cn.c.Close()
-	<-c.slots
+	<-p.slots
 }
 
-func (c *metadClient) call(frame []byte) (byte, []byte, error) {
-	cn, err := c.conn()
+func (p *metadPool) roundTrip(frame []byte) (byte, []byte, bool, error) {
+	cn, err := p.conn()
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
 	if _, err = cn.w.Write(frame); err == nil {
 		err = cn.w.Flush()
@@ -109,20 +130,92 @@ func (c *metadClient) call(frame []byte) (byte, []byte, error) {
 		status, body, err = proto.ReadFrame(cn.r)
 	}
 	if err != nil {
-		c.discard(cn)
-		return 0, nil, err
+		p.discard(cn)
+		return 0, nil, true, err
 	}
-	c.idle <- cn
-	switch status {
-	case proto.StatusOK:
-		return status, body, nil
-	case proto.StatusConflict:
-		return status, nil, proto.ErrConflict
-	case proto.StatusSnapshotGone:
-		return status, nil, proto.ErrSnapshotGone
-	default:
-		d := proto.NewDecoder(body)
-		return status, nil, fmt.Errorf("metad: %s", d.Bytes())
+	p.idle <- cn
+	return status, body, true, nil
+}
+
+func (c *metadClient) follow(from int32, hint string) {
+	next := (from + 1) % int32(len(c.pools))
+	for i, p := range c.pools {
+		if p.addr == hint {
+			next = int32(i)
+		}
+	}
+	c.leader.CompareAndSwap(from, next)
+}
+
+func (c *metadClient) call(frame []byte, safe bool) (byte, []byte, error) {
+	deadline := time.Now().Add(c.failover)
+	var last error
+	for tries := 0; ; tries++ {
+		if tries > 0 {
+			if time.Now().After(deadline) {
+				return 0, nil, fmt.Errorf("metad: no leader within %s: %w", c.failover, last)
+			}
+			if tries%len(c.pools) == 0 {
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		i := c.leader.Load()
+		status, body, sent, err := c.pools[i].roundTrip(frame)
+		if err != nil {
+			if sent && !safe {
+				return 0, nil, fmt.Errorf("%w: %s", proto.ErrUnknown, err)
+			}
+			last = err
+			c.follow(i, "")
+			continue
+		}
+		switch status {
+		case proto.StatusOK:
+			return status, body, nil
+		case proto.StatusNotLeader:
+			d := proto.NewDecoder(body)
+			hint := string(d.Bytes())
+			last = fmt.Errorf("metad: %s is not the leader", c.pools[i].addr)
+			c.follow(i, hint)
+			continue
+		case proto.StatusConflict:
+			return status, nil, proto.ErrConflict
+		case proto.StatusSnapshotGone:
+			return status, nil, proto.ErrSnapshotGone
+		case proto.StatusUnknown:
+			return status, nil, proto.ErrUnknown
+		default:
+			d := proto.NewDecoder(body)
+			return status, nil, fmt.Errorf("metad: %s", d.Bytes())
+		}
+	}
+}
+
+func newTxnID() []byte {
+	id := make([]byte, proto.TxnIDSize)
+	if _, err := rand.Read(id); err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func (c *metadClient) commit(id, frame []byte) error {
+	_, _, err := c.call(frame, false)
+	if !errors.Is(err, proto.ErrUnknown) {
+		return err
+	}
+	e := proto.NewEncoder(proto.OpResolve)
+	e.Bytes(id)
+	resolve := e.Frame()
+	deadline := time.Now().Add(c.failover)
+	for {
+		_, _, rerr := c.call(resolve, true)
+		if rerr == nil || errors.Is(rerr, proto.ErrConflict) {
+			return rerr
+		}
+		if !errors.Is(rerr, proto.ErrUnknown) || time.Now().After(deadline) {
+			return fmt.Errorf("metad: transaction %x: %w after %s, resolve: %s", id, proto.ErrUnknown, err, rerr)
+		}
 	}
 }
 
@@ -144,7 +237,7 @@ func (c *metadClient) scanPage(snapshot uint64, begin, end []byte, keysOnly bool
 		e.U8(0)
 	}
 	e.U32(proto.ScanLimit)
-	_, body, err := c.call(e.Frame())
+	_, body, err := c.call(e.Frame(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -216,22 +309,31 @@ func (c *metadClient) scan(prefix []byte, handler func(key, value []byte) bool) 
 }
 
 func (c *metadClient) reset(prefix []byte) error {
-	e := proto.NewEncoder(proto.OpDeleteRange)
-	e.Bytes(prefix)
-	e.Bytes(nextKey(prefix))
-	_, _, err := c.call(e.Frame())
-	return err
+	for {
+		id := newTxnID()
+		e := proto.NewEncoder(proto.OpDeleteRange)
+		e.Bytes(id)
+		e.Bytes(prefix)
+		e.Bytes(nextKey(prefix))
+		if err := c.commit(id, e.Frame()); !errors.Is(err, proto.ErrConflict) {
+			return err
+		}
+	}
 }
 
 func (c *metadClient) close() error {
-	for {
-		select {
-		case cn := <-c.idle:
-			c.discard(cn)
-		default:
-			return nil
+	for _, p := range c.pools {
+	drain:
+		for {
+			select {
+			case cn := <-p.idle:
+				p.discard(cn)
+			default:
+				break drain
+			}
 		}
 	}
+	return nil
 }
 
 type metadWrite struct {
@@ -271,7 +373,7 @@ func (tx *metadTxn) gets(keys ...[]byte) [][]byte {
 		for _, i := range missing[:n] {
 			e.Bytes(keys[i])
 		}
-		_, body, err := tx.c.call(e.Frame())
+		_, body, err := tx.c.call(e.Frame(), true)
 		if err != nil {
 			panic(err)
 		}
@@ -308,7 +410,7 @@ func (tx *metadTxn) lookup(entry, head, tail []byte) ([]byte, []byte, bool) {
 	e.Bytes(entry)
 	e.Bytes(head)
 	e.Bytes(tail)
-	_, body, err := tx.c.call(e.Frame())
+	_, body, err := tx.c.call(e.Frame(), true)
 	if err != nil {
 		panic(err)
 	}
@@ -439,7 +541,7 @@ func (tx *metadTxn) delete(key []byte) {
 func (tx *metadTxn) id() uint64 { return 0 }
 
 func (tx *metadTxn) commit() error {
-	c := &proto.Commit{Snapshot: tx.snapshot, Ranges: tx.ranges}
+	c := &proto.Commit{ID: newTxnID(), Snapshot: tx.snapshot, Ranges: tx.ranges}
 	for k := range tx.read {
 		c.Keys = append(c.Keys, []byte(k))
 	}
@@ -456,6 +558,5 @@ func (tx *metadTxn) commit() error {
 			c.Writes = append(c.Writes, proto.Write{Op: proto.WriteSet, Key: []byte(k), Value: w.value})
 		}
 	}
-	_, _, err := tx.c.call(proto.EncodeCommit(c))
-	return err
+	return tx.c.commit(c.ID, proto.EncodeCommit(c))
 }

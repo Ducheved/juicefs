@@ -31,6 +31,11 @@ const (
 	OpDeleteRange
 	OpPing
 	OpLookup
+	OpResolve
+	OpRaft
+	OpSnapshot
+	OpSnapshotChunk
+	OpSnapshotEnd
 )
 
 const (
@@ -38,19 +43,25 @@ const (
 	StatusConflict
 	StatusSnapshotGone
 	StatusError
+	StatusNotLeader
+	StatusUnknown
 )
 
 const MaxFrame = 256 << 20
 
 const ScanLimit = 1024
 
+const TxnIDSize = 16
+
 const (
 	WriteSet byte = iota + 1
 	WriteDelete
+	WriteDeleteRange
 )
 
 var ErrConflict = errors.New("metad: conflicting transaction")
 var ErrSnapshotGone = errors.New("metad: snapshot expired")
+var ErrUnknown = errors.New("metad: transaction outcome unknown")
 
 type Range struct {
 	Begin, End []byte
@@ -63,6 +74,7 @@ type Write struct {
 }
 
 type Commit struct {
+	ID       []byte
 	Snapshot uint64
 	Keys     [][]byte
 	Ranges   []Range
@@ -87,6 +99,8 @@ func (e *Encoder) Bytes(b []byte) {
 	e.U32(uint32(len(b)))
 	e.buf = append(e.buf, b...)
 }
+
+func (e *Encoder) Payload() []byte { return e.buf[5:] }
 
 func (e *Encoder) Frame() []byte {
 	binary.BigEndian.PutUint32(e.buf, uint32(len(e.buf)-4))
@@ -146,6 +160,8 @@ func (d *Decoder) Bytes() []byte {
 
 func (d *Decoder) Valid() bool { return d.err == nil }
 
+func (d *Decoder) More() bool { return d.err == nil && len(d.buf) > 0 }
+
 func (d *Decoder) Err() error {
 	if d.err == nil && len(d.buf) != 0 {
 		return fmt.Errorf("metad: %d trailing bytes", len(d.buf))
@@ -181,6 +197,7 @@ func EntryTarget(entry, head, tail []byte) ([]byte, error) {
 
 func EncodeCommit(c *Commit) []byte {
 	e := NewEncoder(OpCommit)
+	e.Bytes(c.ID)
 	e.U64(c.Snapshot)
 	e.U32(uint32(len(c.Keys)))
 	for _, k := range c.Keys {
@@ -191,20 +208,41 @@ func EncodeCommit(c *Commit) []byte {
 		e.Bytes(r.Begin)
 		e.Bytes(r.End)
 	}
-	e.U32(uint32(len(c.Writes)))
-	for _, w := range c.Writes {
+	EncodeWrites(e, c.Writes)
+	return e.Frame()
+}
+
+func EncodeWrites(e *Encoder, ws []Write) {
+	e.U32(uint32(len(ws)))
+	for _, w := range ws {
 		e.U8(w.Op)
 		e.Bytes(w.Key)
-		if w.Op == WriteSet {
+		if w.Op != WriteDelete {
 			e.Bytes(w.Value)
 		}
 	}
-	return e.Frame()
+}
+
+func DecodeWrites(d *Decoder) ([]Write, error) {
+	n := d.U32()
+	ws := make([]Write, 0, min(n, 1<<16))
+	for i := uint32(0); i < n && d.Valid(); i++ {
+		w := Write{Op: d.U8(), Key: d.Bytes()}
+		switch w.Op {
+		case WriteSet, WriteDeleteRange:
+			w.Value = d.Bytes()
+		case WriteDelete:
+		default:
+			return nil, fmt.Errorf("metad: unknown write op %d", w.Op)
+		}
+		ws = append(ws, w)
+	}
+	return ws, d.err
 }
 
 func DecodeCommit(b []byte) (*Commit, error) {
 	d := NewDecoder(b)
-	c := &Commit{Snapshot: d.U64()}
+	c := &Commit{ID: d.Bytes(), Snapshot: d.U64()}
 	n := d.U32()
 	for i := uint32(0); i < n && d.err == nil; i++ {
 		c.Keys = append(c.Keys, d.Bytes())
@@ -213,17 +251,13 @@ func DecodeCommit(b []byte) (*Commit, error) {
 	for i := uint32(0); i < n && d.err == nil; i++ {
 		c.Ranges = append(c.Ranges, Range{d.Bytes(), d.Bytes()})
 	}
-	n = d.U32()
-	for i := uint32(0); i < n && d.err == nil; i++ {
-		w := Write{Op: d.U8(), Key: d.Bytes()}
-		switch w.Op {
-		case WriteSet:
-			w.Value = d.Bytes()
-		case WriteDelete:
-		default:
-			return nil, fmt.Errorf("metad: unknown write op %d", w.Op)
-		}
-		c.Writes = append(c.Writes, w)
+	ws, err := DecodeWrites(d)
+	if err != nil {
+		return nil, err
+	}
+	c.Writes = ws
+	if len(c.ID) != TxnIDSize {
+		return nil, fmt.Errorf("metad: transaction id of %d bytes", len(c.ID))
 	}
 	return c, d.Err()
 }
