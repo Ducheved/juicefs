@@ -18,6 +18,7 @@ package meta
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -47,7 +48,37 @@ type Quota struct {
 	MaxSpace, MaxInodes   int64
 	UsedSpace, UsedInodes int64
 	newSpace, newInodes   int64
+	touched               int64
+	unresolved            bool
 }
+
+type quotaScope struct {
+	allDirs   bool
+	dirs      []uint64
+	userGroup bool
+}
+
+type dirParent struct {
+	parent   Ino
+	verified int64
+	touched  int64
+}
+
+type chainQuota struct {
+	inode      Ino
+	quota      *Quota
+	unresolved bool
+}
+
+const (
+	quotaBatchSize = 500
+	quotaCacheIdle = 2 * time.Minute
+	quotaCacheSize = 100000
+	maxQuotaChain  = 1000
+
+	parentRefreshBatch   = 10000
+	parentRefreshWorkers = 16
+)
 
 type iQuota struct {
 	qtype uint32
@@ -299,8 +330,8 @@ func (m *baseMeta) checkQuota(ctx Context, space, inodes int64, uid, gid uint32,
 		return 0
 	}
 	for _, ino := range parents {
-		if m.checkDirQuota(ctx, ino, space, inodes) {
-			return syscall.EDQUOT
+		if st := m.checkDirQuota(ctx, ino, space, inodes); st != 0 {
+			return st
 		}
 	}
 	return 0
@@ -311,20 +342,147 @@ func (m *baseMeta) loadQuotas() {
 	if !format.DirStats && !format.UserGroupQuota {
 		return
 	}
+	if format.DirStats {
+		if exist, err := m.en.doHasDirQuotas(Background()); err != nil {
+			logger.Warnf("Check dir quotas: %s", err)
+		} else {
+			m.noDirQuota.Store(!exist)
+		}
+	}
+	if m.refreshQuotas() && format.DirStats && !m.noDirQuota.Load() {
+		m.refreshDirParents(Background())
+	}
+}
+
+func (m *baseMeta) refreshQuotas() bool {
 	m.quotasFlushLock.Lock()
 	defer m.quotasFlushLock.Unlock()
 
-	dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(Background())
+	positive, negative := m.cachedDirQuotas()
+	dirs := append(append([]uint64{}, positive...), negative...)
+	dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(Background(), quotaScope{dirs: dirs, userGroup: true})
 	if err != nil {
 		logger.Warnf("Load quotas: %s", err)
-		return
+		return false
 	}
 	m.quotaMu.Lock()
 	defer m.quotaMu.Unlock()
 
-	m.syncQuotaMaps(m.dirQuotas, dirQuotas, "inode")
+	m.syncDirQuotas(positive, negative, dirQuotas)
 	m.syncQuotaMaps(m.userQuotas, userQuotas, "user")
 	m.syncQuotaMaps(m.groupQuotas, groupQuotas, "group")
+	return true
+}
+
+func evictThreshold(touched []int64, idle int64) int64 {
+	if len(touched) <= quotaCacheSize {
+		return idle
+	}
+	sort.Slice(touched, func(i, j int) bool { return touched[i] < touched[j] })
+	return max(idle, touched[len(touched)-quotaCacheSize])
+}
+
+func (m *baseMeta) cachedDirQuotas() (positive, negative []uint64) {
+	idle := time.Now().Add(-quotaCacheIdle).UnixNano()
+	m.quotaMu.RLock()
+	touched := make([]int64, 0, len(m.dirQuotas)+len(m.noDirQuotas))
+	for _, q := range m.dirQuotas {
+		touched = append(touched, atomic.LoadInt64(&q.touched))
+	}
+	for _, t := range m.noDirQuotas {
+		touched = append(touched, atomic.LoadInt64(t))
+	}
+	m.quotaMu.RUnlock()
+	threshold := evictThreshold(touched, idle)
+	none := m.noDirQuota.Load()
+
+	m.quotaMu.Lock()
+	defer m.quotaMu.Unlock()
+	for ino, q := range m.dirQuotas {
+		if atomic.LoadInt64(&q.touched) < threshold && atomic.LoadInt64(&q.newSpace) == 0 && atomic.LoadInt64(&q.newInodes) == 0 {
+			delete(m.dirQuotas, ino)
+		} else {
+			positive = append(positive, ino)
+		}
+	}
+	for ino, t := range m.noDirQuotas {
+		if none || atomic.LoadInt64(t) < threshold {
+			delete(m.noDirQuotas, ino)
+		} else {
+			negative = append(negative, ino)
+		}
+	}
+	return
+}
+
+func (m *baseMeta) syncDirQuotas(positive, negative []uint64, loaded map[uint64]*Quota) {
+	for _, ino := range positive {
+		existing := m.dirQuotas[ino]
+		if existing == nil {
+			continue
+		}
+		if q, found := loaded[ino]; found {
+			atomic.SwapInt64(&existing.MaxSpace, q.MaxSpace)
+			atomic.SwapInt64(&existing.MaxInodes, q.MaxInodes)
+			atomic.SwapInt64(&existing.UsedSpace, q.UsedSpace)
+			atomic.SwapInt64(&existing.UsedInodes, q.UsedInodes)
+			existing.unresolved = false
+			continue
+		}
+		if !existing.unresolved {
+			logger.Infof("Quota for inode %d is deleted", ino)
+		}
+		delete(m.dirQuotas, ino)
+		if !m.noDirQuota.Load() {
+			t := atomic.LoadInt64(&existing.touched)
+			m.noDirQuotas[ino] = &t
+		}
+	}
+	for _, ino := range negative {
+		q, found := loaded[ino]
+		if !found || m.dirQuotas[ino] != nil {
+			continue
+		}
+		if t := m.noDirQuotas[ino]; t != nil {
+			q.touched = atomic.LoadInt64(t)
+			delete(m.noDirQuotas, ino)
+		} else {
+			q.touched = time.Now().UnixNano()
+		}
+		logger.Infof("Quota for inode %d is loaded", ino)
+		m.dirQuotas[ino] = q
+	}
+}
+
+func (m *baseMeta) fetchDirQuotas(inodes []uint64) {
+	var loaded map[uint64]*Quota
+	var err error
+	for i := 0; i < 3; i++ {
+		if loaded, _, _, err = m.en.doLoadQuotas(Background(), quotaScope{dirs: inodes}); err == nil {
+			break
+		}
+		time.Sleep(time.Duration(10<<i) * time.Millisecond)
+	}
+	if err != nil {
+		logger.Warnf("Load quotas of inodes %v: %s", inodes, err)
+	}
+	now := time.Now().UnixNano()
+	m.quotaMu.Lock()
+	defer m.quotaMu.Unlock()
+	for _, ino := range inodes {
+		if m.dirQuotas[ino] != nil || m.noDirQuotas[ino] != nil {
+			continue
+		}
+		if err != nil {
+			m.dirQuotas[ino] = &Quota{MaxSpace: -1, MaxInodes: -1, touched: now, unresolved: true}
+		} else if q := loaded[ino]; q != nil {
+			q.touched = now
+			m.dirQuotas[ino] = q
+		} else {
+			t := now
+			m.noDirQuotas[ino] = &t
+		}
+	}
 }
 
 func (m *baseMeta) syncQuotaMaps(existing map[uint64]*Quota, loaded map[uint64]*Quota, quotaType string) {
@@ -340,79 +498,176 @@ func (m *baseMeta) syncQuotaMaps(existing map[uint64]*Quota, loaded map[uint64]*
 			existing[key] = q
 		}
 	}
-	// delete that are not in loaded
-	if quotaType == "inode" {
-		for key := range existing {
-			if _, ok := loaded[key]; !ok {
-				logger.Infof("Quota for %s %d is deleted", quotaType, key)
-				delete(existing, key)
-			}
-		}
-	}
+}
+
+func (m *baseMeta) setDirParent(inode, parent Ino) {
+	now := time.Now().UnixNano()
+	m.parentMu.Lock()
+	m.dirParents[inode] = dirParent{parent: parent, verified: now, touched: m.dirParents[inode].touched}
+	m.parentMu.Unlock()
 }
 
 func (m *baseMeta) getDirParent(ctx Context, inode Ino) (Ino, syscall.Errno) {
+	now := time.Now().UnixNano()
 	m.parentMu.Lock()
-	parent, ok := m.dirParents[inode]
+	p, ok := m.dirParents[inode]
+	if ok {
+		p.touched = now
+		m.dirParents[inode] = p
+	}
 	m.parentMu.Unlock()
 	if ok {
-		return parent, 0
+		return p.parent, 0
 	}
 	logger.Debugf("Get directory parent of inode %d: cache miss", inode)
 	var attr Attr
 	st := m.GetAttr(ctx, inode, &attr)
+	if st == 0 {
+		m.parentMu.Lock()
+		if p, ok := m.dirParents[inode]; ok {
+			p.touched = now
+			m.dirParents[inode] = p
+		}
+		m.parentMu.Unlock()
+	}
 	return attr.Parent, st
+}
+
+func (m *baseMeta) refreshDirParents(ctx Context) {
+	now := time.Now()
+	idle := now.Add(-quotaCacheIdle).UnixNano()
+	stale := now.Add(-m.conf.Heartbeat / 2).UnixNano()
+	m.parentMu.Lock()
+	touched := make([]int64, 0, len(m.dirParents))
+	for _, p := range m.dirParents {
+		touched = append(touched, max(p.touched, p.verified))
+	}
+	m.parentMu.Unlock()
+	threshold := evictThreshold(touched, idle)
+
+	type candidate struct {
+		inode    Ino
+		verified int64
+	}
+	var candidates []candidate
+	m.parentMu.Lock()
+	for ino, p := range m.dirParents {
+		if max(p.touched, p.verified) < threshold {
+			delete(m.dirParents, ino)
+		} else if p.touched >= idle && p.verified < stale {
+			candidates = append(candidates, candidate{ino, p.verified})
+		}
+	}
+	m.parentMu.Unlock()
+	if len(candidates) > parentRefreshBatch {
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].verified < candidates[j].verified })
+		candidates = candidates[:parentRefreshBatch]
+	}
+
+	work := make(chan candidate)
+	var wg sync.WaitGroup
+	for i := 0; i < parentRefreshWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for c := range work {
+				var attr Attr
+				st := m.en.doGetAttr(ctx, c.inode, &attr)
+				if st != 0 && st != syscall.ENOENT {
+					logger.Warnf("Refresh directory parent of inode %d: %s", c.inode, st)
+					continue
+				}
+				m.parentMu.Lock()
+				if p, ok := m.dirParents[c.inode]; ok && p.verified == c.verified {
+					if st == 0 && attr.Typ == TypeDirectory && !attr.Parent.IsTrash() {
+						p.parent, p.verified = attr.Parent, time.Now().UnixNano()
+						m.dirParents[c.inode] = p
+					} else {
+						delete(m.dirParents, c.inode)
+					}
+				}
+				m.parentMu.Unlock()
+			}
+		}()
+	}
+	for _, c := range candidates {
+		work <- c
+	}
+	close(work)
+	wg.Wait()
+}
+
+func (m *baseMeta) quotaChain(ctx Context, inode Ino) []chainQuota {
+	if !m.getFormat().DirStats || m.noDirQuota.Load() {
+		return nil
+	}
+	var chain []Ino
+	for inode > 0 {
+		if slices.Contains(chain, inode) || len(chain) >= maxQuotaChain {
+			logger.Warnf("Loop in directory parents of inode %d: %v", chain[0], chain)
+			m.parentMu.Lock()
+			for _, ino := range chain {
+				delete(m.dirParents, ino)
+			}
+			m.parentMu.Unlock()
+			break
+		}
+		chain = append(chain, inode)
+		if inode <= RootInode {
+			break
+		}
+		last := inode
+		var st syscall.Errno
+		if inode, st = m.getDirParent(ctx, inode); st != 0 {
+			logger.Warnf("Get directory parent of inode %d: %s", last, st)
+			break
+		}
+	}
+	collect := func() ([]chainQuota, []uint64) {
+		now := time.Now().UnixNano()
+		var quotas []chainQuota
+		var unknown []uint64
+		m.quotaMu.RLock()
+		defer m.quotaMu.RUnlock()
+		for _, ino := range chain {
+			if q := m.dirQuotas[uint64(ino)]; q != nil {
+				atomic.StoreInt64(&q.touched, now)
+				quotas = append(quotas, chainQuota{ino, q, q.unresolved})
+			} else if t := m.noDirQuotas[uint64(ino)]; t != nil {
+				atomic.StoreInt64(t, now)
+			} else {
+				unknown = append(unknown, uint64(ino))
+			}
+		}
+		return quotas, unknown
+	}
+	quotas, unknown := collect()
+	if len(unknown) > 0 {
+		m.fetchDirQuotas(unknown)
+		quotas, _ = collect()
+	}
+	return quotas
 }
 
 // get inode of the first parent (or myself) with quota
 func (m *baseMeta) getQuotaParent(ctx Context, inode Ino) (Ino, *Quota) {
-	if !m.getFormat().DirStats {
-		return 0, nil
-	}
-	var q *Quota
-	var st syscall.Errno
-	for {
-		m.quotaMu.RLock()
-		q = m.dirQuotas[uint64(inode)]
-		m.quotaMu.RUnlock()
-		if q != nil {
-			return inode, q
-		}
-		if inode <= RootInode {
-			break
-		}
-		lastInode := inode
-		if inode, st = m.getDirParent(ctx, inode); st != 0 {
-			logger.Warnf("Get directory parent of inode %d: %s", lastInode, st)
-			break
-		}
+	for _, c := range m.quotaChain(ctx, inode) {
+		return c.inode, c.quota
 	}
 	return 0, nil
 }
 
-func (m *baseMeta) checkDirQuota(ctx Context, inode Ino, space, inodes int64) bool {
-	if !m.getFormat().DirStats {
-		return false
-	}
-	var q *Quota
-	var st syscall.Errno
-	for {
-		m.quotaMu.RLock()
-		q = m.dirQuotas[uint64(inode)]
-		m.quotaMu.RUnlock()
-		if q != nil && q.check(space, inodes) {
-			return true
-		}
-		if inode <= RootInode {
-			break
-		}
-		lastInode := inode
-		if inode, st = m.getDirParent(ctx, inode); st != 0 {
-			logger.Warnf("Get directory parent of inode %d: %s", lastInode, st)
-			break
+func (m *baseMeta) checkDirQuota(ctx Context, inode Ino, space, inodes int64) syscall.Errno {
+	for _, c := range m.quotaChain(ctx, inode) {
+		if c.unresolved {
+			if space > 0 || inodes > 0 {
+				return syscall.EIO
+			}
+		} else if c.quota.check(space, inodes) {
+			return syscall.EDQUOT
 		}
 	}
-	return false
+	return 0
 }
 
 func (m *baseMeta) checkUserQuota(ctx Context, uid uint64, space, inodes int64) bool {
@@ -448,26 +703,8 @@ func (m *baseMeta) checkGroupQuota(ctx Context, gid uint64, space, inodes int64)
 }
 
 func (m *baseMeta) updateDirQuota(ctx Context, inode Ino, space, inodes int64) {
-	if !m.getFormat().DirStats {
-		return
-	}
-	var q *Quota
-	var st syscall.Errno
-	for {
-		m.quotaMu.RLock()
-		q = m.dirQuotas[uint64(inode)]
-		m.quotaMu.RUnlock()
-		if q != nil {
-			q.update(space, inodes)
-		}
-		if inode <= RootInode {
-			break
-		}
-		lastInode := inode
-		if inode, st = m.getDirParent(ctx, inode); st != 0 {
-			logger.Warnf("Get directory parent of inode %d: %s", lastInode, st)
-			break
-		}
+	for _, c := range m.quotaChain(ctx, inode) {
+		c.quota.update(space, inodes)
 	}
 }
 
@@ -523,6 +760,9 @@ func (m *baseMeta) flushQuotas(ctx Context) {
 func (m *baseMeta) collectQuotas(qtype uint32, quotas map[uint64]*Quota) []*iQuota {
 	var result []*iQuota
 	for key, q := range quotas {
+		if q.unresolved {
+			continue
+		}
 		newSpace := atomic.LoadInt64(&q.newSpace)
 		newInodes := atomic.LoadInt64(&q.newInodes)
 		if newSpace != 0 || newInodes != 0 {
@@ -665,6 +905,12 @@ func (m *baseMeta) handleQuotaSet(ctx Context, qtype uint32, key uint64, dpath s
 	})
 	if err != nil {
 		return err
+	}
+	if qtype == DirQuotaType {
+		m.noDirQuota.Store(false)
+		m.quotaMu.Lock()
+		delete(m.noDirQuotas, uint64(key))
+		m.quotaMu.Unlock()
 	}
 	if created && qtype == DirQuotaType {
 		return m.calcDirQuotaUsage(ctx, Ino(key), dpath, strict)
@@ -881,7 +1127,7 @@ func (m *baseMeta) handleQuotaGet(ctx Context, qtype uint32, key uint64, dpath s
 }
 
 func (m *baseMeta) handleQuotaList(ctx Context, qtype uint32, key uint64, quotas map[string]*Quota) error {
-	dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(ctx)
+	dirQuotas, userQuotas, groupQuotas, err := m.en.doLoadQuotas(ctx, quotaScope{allDirs: true, userGroup: true})
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1296,7 @@ func (m *baseMeta) checkUGUsage(ctx Context, repair bool, quotas map[string]*Quo
 		return fmt.Errorf("scan global user group usage: %w", err)
 	}
 
-	_, userQuotas, groupQuotas, err := m.en.doLoadQuotas(ctx)
+	_, userQuotas, groupQuotas, err := m.en.doLoadQuotas(ctx, quotaScope{userGroup: true})
 	if err != nil {
 		return fmt.Errorf("load user/group quotas: %w", err)
 	}

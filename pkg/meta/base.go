@@ -111,7 +111,8 @@ type engine interface {
 	// set quota, return true if there is no quota exists before
 	doSetQuota(ctx Context, qtype uint32, key uint64, quota *Quota) (created bool, err error)
 	doDelQuota(ctx Context, qtype uint32, key uint64) error
-	doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error)
+	doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error)
+	doHasDirQuotas(ctx Context) (bool, error)
 	doFlushQuotas(ctx Context, quotas []*iQuota) error
 	cleanUgUsage(ctx Context, qtype uint32) error
 
@@ -319,8 +320,10 @@ type baseMeta struct {
 	parentMu        sync.Mutex        // protect dirParents
 	quotaMu         sync.RWMutex      // protect dirQuotas
 	quotasFlushLock sync.Mutex        // prevent concurrent doFlushQuotas
-	dirParents      map[Ino]Ino       // directory inode -> parent inode
+	dirParents      map[Ino]dirParent // directory inode -> parent inode
 	dirQuotas       map[uint64]*Quota // directory inode -> quota
+	noDirQuotas     map[uint64]*int64
+	noDirQuota      atomic.Bool
 	userQuotas      map[uint64]*Quota // uid -> quota
 	groupQuotas     map[uint64]*Quota // gid -> quota
 
@@ -386,7 +389,8 @@ func newBaseMeta(addr string, conf *Config) *baseMeta {
 			usedInodes: unknownUsage,
 		},
 		dirStats:    make(map[Ino]dirStat),
-		dirParents:  make(map[Ino]Ino),
+		dirParents:  make(map[Ino]dirParent),
+		noDirQuotas: make(map[uint64]*int64),
 		dirQuotas:   make(map[uint64]*Quota),
 		userQuotas:  make(map[uint64]*Quota),
 		groupQuotas: make(map[uint64]*Quota),
@@ -1193,14 +1197,12 @@ func (m *baseMeta) StatFS(ctx Context, ino Ino, totalspace, availspace, iused, i
 	if st := m.statRootFs(ctx, totalspace, availspace, iused, iavail); st != 0 {
 		return st
 	}
-	ino = m.checkRoot(ino)
-	var usage, quota *Quota
-	for ino >= RootInode {
-		ino, quota = m.getQuotaParent(ctx, ino)
-		if quota == nil {
-			break
+	var usage *Quota
+	for _, c := range m.quotaChain(ctx, m.checkRoot(ino)) {
+		if c.unresolved {
+			continue
 		}
-		q := quota.snap()
+		q := c.quota.snap()
 		q.sanitize()
 		if usage == nil {
 			usage = &q
@@ -1216,15 +1218,6 @@ func (m *baseMeta) StatFS(ctx Context, ino Ino, totalspace, availspace, iused, i
 			if li < *iavail {
 				*iavail = li
 			}
-		}
-		if ino == RootInode {
-			break
-		}
-		if parent, st := m.getDirParent(ctx, ino); st != 0 {
-			logger.Warnf("Get directory parent of inode %d: %s", ino, st)
-			break
-		} else {
-			ino = parent
 		}
 	}
 	if usage != nil {
@@ -1367,9 +1360,7 @@ func (m *baseMeta) Lookup(ctx Context, parent Ino, name string, inode *Ino, attr
 		}
 	}
 	if st == 0 && attr.Typ == TypeDirectory && !parent.IsTrash() {
-		m.parentMu.Lock()
-		m.dirParents[*inode] = parent
-		m.parentMu.Unlock()
+		m.setDirParent(*inode, parent)
 	}
 	return st
 }
@@ -1545,9 +1536,7 @@ func (m *baseMeta) GetAttr(ctx Context, inode Ino, attr *Attr) syscall.Errno {
 	if err == 0 {
 		m.of.Update(inode, attr)
 		if attr.Typ == TypeDirectory && inode != RootInode && !attr.Parent.IsTrash() {
-			m.parentMu.Lock()
-			m.dirParents[inode] = attr.Parent
-			m.parentMu.Unlock()
+			m.setDirParent(inode, attr.Parent)
 		}
 	}
 	return err
@@ -1757,9 +1746,7 @@ func (m *baseMeta) Create(ctx Context, parent Ino, name string, mode uint16, cum
 func (m *baseMeta) Mkdir(ctx Context, parent Ino, name string, mode uint16, cumask uint16, copysgid uint8, inode *Ino, attr *Attr) syscall.Errno {
 	st := m.Mknod(ctx, parent, name, TypeDirectory, mode, cumask, 0, "", inode, attr)
 	if st == 0 {
-		m.parentMu.Lock()
-		m.dirParents[*inode] = m.checkRoot(parent)
-		m.parentMu.Unlock()
+		m.setDirParent(*inode, m.checkRoot(parent))
 	}
 	return st
 }
@@ -1818,8 +1805,8 @@ func (m *baseMeta) Link(ctx Context, inode, parent Ino, name string, attr *Attr)
 	if m.checkGroupQuota(ctx, uint64(attr.Gid), 0, 1) {
 		return syscall.EDQUOT
 	}
-	if m.checkDirQuota(ctx, parent, align4K(attr.Length), 1) {
-		return syscall.EDQUOT
+	if st := m.checkDirQuota(ctx, parent, align4K(attr.Length), 1); st != 0 {
+		return st
 	}
 
 	defer func() { m.of.InvalidateChunk(inode, invalidateAttrOnly) }()
@@ -2033,10 +2020,8 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 			return st
 		}
 		if attr.Typ == TypeDirectory {
-			m.quotaMu.RLock()
-			q := m.dirQuotas[uint64(*inode)]
-			m.quotaMu.RUnlock()
-			if q != nil {
+			if chain := m.quotaChain(ctx, *inode); len(chain) > 0 && chain[0].inode == *inode && !chain[0].unresolved {
+				q := chain[0].quota
 				space, inodes = q.UsedSpace+align4K(0), q.UsedInodes+1
 			} else {
 				var sum Summary
@@ -2051,8 +2036,10 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 			space, inodes = align4K(attr.Length), 1
 		}
 		// TODO: dst exists and is replaced or exchanged
-		if quotaDst > 0 && m.checkDirQuota(ctx, parentDst, space, inodes) {
-			return syscall.EDQUOT
+		if quotaDst > 0 {
+			if st := m.checkDirQuota(ctx, parentDst, space, inodes); st != 0 {
+				return st
+			}
 		}
 	}
 	tinode := new(Ino)
@@ -2065,9 +2052,7 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 	if st == 0 {
 		var diffLength uint64
 		if attr.Typ == TypeDirectory {
-			m.parentMu.Lock()
-			m.dirParents[*inode] = parentDst
-			m.parentMu.Unlock()
+			m.setDirParent(*inode, parentDst)
 		} else if attr.Typ == TypeFile {
 			diffLength = attr.Length
 		}
@@ -2086,15 +2071,13 @@ func (m *baseMeta) Rename(ctx Context, parentSrc Ino, nameSrc string, parentDst 
 		if *tinode > 0 {
 			diffLength = 0
 			if tattr.Typ == TypeDirectory {
-				m.parentMu.Lock()
-				if flags == RenameExchange {
-					if parentSrc != parentDst {
-						m.dirParents[*tinode] = parentSrc
-					}
-				} else {
+				if flags != RenameExchange {
+					m.parentMu.Lock()
 					delete(m.dirParents, *tinode)
+					m.parentMu.Unlock()
+				} else if parentSrc != parentDst {
+					m.setDirParent(*tinode, parentSrc)
 				}
-				m.parentMu.Unlock()
 			} else if tattr.Typ == TypeFile {
 				diffLength = uint64(tattr.Length)
 			}

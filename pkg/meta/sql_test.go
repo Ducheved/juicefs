@@ -181,6 +181,32 @@ func TestSQLiteClient(t *testing.T) {
 	testMeta(t, m)
 }
 
+func TestSQLiteDirQuotaRefresh(t *testing.T) {
+	db := path.Join(t.TempDir(), "jfs-quota-refresh.db")
+	testDirQuotaRefresh(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newSQLMeta("sqlite3", db, conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		return m
+	})
+}
+
+func TestSQLiteDirQuotaRefreshFaults(t *testing.T) {
+	db := path.Join(t.TempDir(), "jfs-quota-faults.db")
+	testDirQuotaRefreshFaults(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newSQLMeta("sqlite3", db, conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		return m
+	})
+}
+
 func TestSQLiteRenameOverRelinkedHardlink(t *testing.T) {
 	m, err := newSQLMeta("sqlite3", path.Join(t.TempDir(), "jfs-rename-relink.db"), testConfig())
 	if err != nil || m.Name() != "sqlite3" {

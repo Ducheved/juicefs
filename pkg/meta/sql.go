@@ -4634,18 +4634,36 @@ func (m *dbMeta) doDelQuota(ctx Context, qtype uint32, key uint64) error {
 	})
 }
 
-func (m *dbMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
+func (m *dbMeta) doHasDirQuotas(ctx Context) (bool, error) {
+	var exist bool
+	err := m.simpleTxn(ctx, func(s *xorm.Session) error {
+		var e error
+		exist, e = s.Exist(&dirQuota{})
+		return e
+	})
+	return exist, err
+}
+
+func (m *dbMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
 	format := m.getFormat()
 	var dirQuotasList []dirQuota
 	var userGroupQuotasList []userGroupQuota
 
 	err := m.simpleTxn(ctx, func(s *xorm.Session) error {
-		if format.DirStats {
+		if format.DirStats && scope.allDirs {
 			if e := s.Find(&dirQuotasList); e != nil {
 				return e
 			}
+		} else if format.DirStats {
+			for i := 0; i < len(scope.dirs); i += quotaBatchSize {
+				var batch []dirQuota
+				if e := s.In("inode", scope.dirs[i:min(i+quotaBatchSize, len(scope.dirs))]).Find(&batch); e != nil {
+					return e
+				}
+				dirQuotasList = append(dirQuotasList, batch...)
+			}
 		}
-		if format.UserGroupQuota {
+		if format.UserGroupQuota && scope.userGroup {
 			if e := s.Find(&userGroupQuotasList); e != nil {
 				return e
 			}

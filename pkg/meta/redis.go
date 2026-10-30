@@ -4049,6 +4049,39 @@ func (m *redisMeta) hscan(ctx context.Context, key string, f func([]string) erro
 	return nil
 }
 
+func (m *redisMeta) doHasDirQuotas(ctx Context) (bool, error) {
+	n, err := m.rdb.Exists(ctx, m.dirQuotaUsedInodesKey()).Result()
+	return n > 0, err
+}
+
+func (m *redisMeta) hmgetQuotas(ctx Context, config *quotaKeys, keys []uint64) (map[string]string, map[string]string, map[string]string, error) {
+	usedInodes, usedSpace, limits := make(map[string]string), make(map[string]string), make(map[string]string)
+	for i := 0; i < len(keys); i += quotaBatchSize {
+		batch := keys[i:min(i+quotaBatchSize, len(keys))]
+		fields := make([]string, len(batch))
+		for j, k := range batch {
+			fields[j] = strconv.FormatUint(k, 10)
+		}
+		cmds, err := m.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HMGet(ctx, config.usedInodesKey, fields...)
+			pipe.HMGet(ctx, config.usedSpaceKey, fields...)
+			pipe.HMGet(ctx, config.quotaKey, fields...)
+			return nil
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for c, dst := range []map[string]string{usedInodes, usedSpace, limits} {
+			for j, v := range cmds[c].(*redis.SliceCmd).Val() {
+				if s, ok := v.(string); ok {
+					dst[fields[j]] = s
+				}
+			}
+		}
+	}
+	return usedInodes, usedSpace, limits, nil
+}
+
 func (m *redisMeta) hscanToMap(ctx context.Context, key string) (map[string]string, error) {
 	result := make(map[string]string)
 	err := m.hscan(ctx, key, func(keys []string) error {
@@ -4620,7 +4653,7 @@ func (m *redisMeta) doDelQuota(ctx Context, qtype uint32, key uint64) error {
 	return err
 }
 
-func (m *redisMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
+func (m *redisMeta) doLoadQuotas(ctx Context, scope quotaScope) (map[uint64]*Quota, map[uint64]*Quota, map[uint64]*Quota, error) {
 	format := m.getFormat()
 	dirQuotas := make(map[uint64]*Quota)
 	userQuotas := make(map[uint64]*Quota)
@@ -4632,9 +4665,9 @@ func (m *redisMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Qu
 		name    string
 		quotas  map[uint64]*Quota
 	}{
-		{format.DirStats, DirQuotaType, "dir", dirQuotas},
-		{format.UserGroupQuota, UserQuotaType, "user", userQuotas},
-		{format.UserGroupQuota, GroupQuotaType, "group", groupQuotas},
+		{format.DirStats && (scope.allDirs || len(scope.dirs) > 0), DirQuotaType, "dir", dirQuotas},
+		{format.UserGroupQuota && scope.userGroup, UserQuotaType, "user", userQuotas},
+		{format.UserGroupQuota && scope.userGroup, GroupQuotaType, "group", groupQuotas},
 	}
 
 	for _, qt := range quotaTypes {
@@ -4647,17 +4680,22 @@ func (m *redisMeta) doLoadQuotas(ctx Context) (map[uint64]*Quota, map[uint64]*Qu
 			return nil, nil, nil, fmt.Errorf("failed to load %s quotas: %w", qt.name, err)
 		}
 
-		usedInodesMap, err := m.hscanToMap(ctx, config.usedInodesKey)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		usedSpaceMap, err := m.hscanToMap(ctx, config.usedSpaceKey)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		quotaMap, err := m.hscanToMap(ctx, config.quotaKey)
-		if err != nil {
-			return nil, nil, nil, err
+		var usedInodesMap, usedSpaceMap, quotaMap map[string]string
+		if qt.qtype == DirQuotaType && !scope.allDirs {
+			usedInodesMap, usedSpaceMap, quotaMap, err = m.hmgetQuotas(ctx, config, scope.dirs)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		} else {
+			if usedInodesMap, err = m.hscanToMap(ctx, config.usedInodesKey); err != nil {
+				return nil, nil, nil, err
+			}
+			if usedSpaceMap, err = m.hscanToMap(ctx, config.usedSpaceKey); err != nil {
+				return nil, nil, nil, err
+			}
+			if quotaMap, err = m.hscanToMap(ctx, config.quotaKey); err != nil {
+				return nil, nil, nil, err
+			}
 		}
 
 		for key, usedInodesStr := range usedInodesMap {
