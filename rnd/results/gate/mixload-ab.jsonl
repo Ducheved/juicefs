@@ -1,0 +1,9 @@
+{"create":{"ops":6013,"ops_per_s":300.65,"p50_us":10876,"p99_us":49377},"label":"kv-fix-1","lookup":{"ops":709754,"ops_per_s":35487.7,"p50_us":445,"p99_us":6201}}
+{"create":{"ops":5661,"ops_per_s":283.05,"p50_us":11980,"p99_us":50697},"label":"kv-fix-2","lookup":{"ops":694242,"ops_per_s":34712.1,"p50_us":463,"p99_us":6356}}
+{"create":{"ops":5601,"ops_per_s":280.05,"p50_us":11619,"p99_us":54626},"label":"kv-fix-3","lookup":{"ops":702184,"ops_per_s":35109.2,"p50_us":452,"p99_us":6513}}
+{"create":{"ops":19700,"ops_per_s":985,"p50_us":3218,"p99_us":14005},"label":"redis-old-1","lookup":{"ops":1451861,"ops_per_s":72593.05,"p50_us":376,"p99_us":1546}}
+{"create":{"ops":18854,"ops_per_s":942.7,"p50_us":3356,"p99_us":15583},"label":"redis-fix-1","lookup":{"ops":1392751,"ops_per_s":69637.55,"p50_us":386,"p99_us":1630}}
+{"create":{"ops":19300,"ops_per_s":965,"p50_us":3248,"p99_us":13904},"label":"redis-old-2","lookup":{"ops":1426041,"ops_per_s":71302.05,"p50_us":394,"p99_us":1442}}
+{"create":{"ops":19968,"ops_per_s":998.4,"p50_us":3114,"p99_us":13309},"label":"redis-fix-2","lookup":{"ops":1478830,"ops_per_s":73941.5,"p50_us":387,"p99_us":1367}}
+{"create":{"ops":19270,"ops_per_s":963.5,"p50_us":3245,"p99_us":13228},"label":"redis-old-3","lookup":{"ops":1419627,"ops_per_s":70981.35,"p50_us":397,"p99_us":1420}}
+{"create":{"ops":19215,"ops_per_s":960.75,"p50_us":3245,"p99_us":13185},"label":"redis-fix-3","lookup":{"ops":1405961,"ops_per_s":70298.05,"p50_us":400,"p99_us":1420}}

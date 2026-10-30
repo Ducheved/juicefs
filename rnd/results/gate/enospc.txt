@@ -1,0 +1,19 @@
+fill stopped at 104: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+exec on a full disk:
+OK
+QUEUED
+QUEUED
+QUEUED
+ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+
+ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+
+ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+
+after exec: tx1= tx3= tx2.f=
+space freed, write after +0s: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+space freed, write after +5s: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+space freed, write after +30s: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+space freed, write after +60s: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+space freed, write after +120s: ERR IO error: No space left on device: While appending to file: /data/db/000010.log: No space left on device
+after restart: OK fill1=200000 tx1=

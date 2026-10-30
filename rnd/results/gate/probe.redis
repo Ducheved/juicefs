@@ -1,0 +1,15 @@
+lookup ok:  32 0a 00 41 c0 00 00 03 e8 00 00 03 e8 0a 
+lookup ro:  32 0a 00 41 c0 00 00 03 e8 00 00 03 e8 0a 
+lookup enoent: ENOENT
+lookup big: ENOTSUP
+resolve ok:  33 0a 00 81 a4 00 00 03 e8 00 00 03 e8 0a 
+resolve eacces: EACCESS
+resolve enotdir: ENOTDIR
+resolve enoent: ENOENT
+noscript: NOSCRIPT
+wrongtype: WRONGTYPE Operation against a key holding the wrong kind of value
+overflow: ERR increment or decrement would overflow
+watch d1 then [evalsha sub] by another client: exec committed
+watch d1 then [evalsha_ro sub] by another client: exec committed
+watch d1 then [hget sub] by another client: exec committed
+watch d1 then [eval d1] by another client: exec committed

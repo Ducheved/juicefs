@@ -1,0 +1,10 @@
+kvrocks 2.17.0 rocksdb.write_options.sync yes: fsync dominates SET
+rep1 background=evalsha set: set k v: 3239.39 requests per second, p50=8.351 msec
+rep1 background=evalsha_ro set: set k v: 3649.86 requests per second, p50=8.247 msec
+rep1 background=hget set: set k v: 3458.41 requests per second, p50=8.647 msec
+rep2 background=evalsha set: set k v: 3319.69 requests per second, p50=7.911 msec
+rep2 background=evalsha_ro set: set k v: 3472.02 requests per second, p50=8.335 msec
+rep2 background=hget set: set k v: 3454.43 requests per second, p50=8.487 msec
+rep3 background=evalsha set: set k v: 2990.43 requests per second, p50=8.799 msec
+rep3 background=evalsha_ro set: set k v: 3605.55 requests per second, p50=8.591 msec
+rep3 background=hget set: set k v: 3729.72 requests per second, p50=8.023 msec

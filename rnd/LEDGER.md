@@ -197,3 +197,39 @@ Decision (owner, 2026-10-30): no on-demand metadata reads from S3 in the main de
 - S3 Standard small GET: p50 ≈ 30–40 ms, p99 ≈ 170 ms; ≈ 30 ms + 20 ms/MiB (VLDB'23). A cold stat served from S3 would cost one paid GET and tens of milliseconds, which is why on-demand S3 metadata is out of the main design.
 
 Evidence fixes (2026-10-30, after external review of `cd780bb`): raw results of the growth, Kvrocks, big-unit and capsule runs are now committed under `rnd/results`; `capsule-exp.sh` and `auto-e2e.sh` exit non-zero on a failed prefetch, dump or manifest comparison; the generator used for the PostgreSQL run is `rnd/nsgen` (the `nsgen2` binary was an uncommitted build of it); `rnd/corpus` gives realistic, collision-free names and sizes shared by `nsgen -random` and `probe -random`.
+
+## Redis/Lua dependency gate (before any backend choice)
+
+Script: `rnd/kvrocks-gate.sh`; raw output in `rnd/results/gate`. Kvrocks 2.17.0 against Redis 7.0.15.
+
+| Item | Label | Value |
+|---|---|---|
+| Commands JuiceFS sends (MONITOR during `TestRedisClient` and the Redis lock/clone tests) | RUN | 49 distinct, `commands.txt`; plus CONFIG, DBSIZE, FLUSHALL, CLIENT, MSET, ZRANGE from source |
+| Of those, missing on Kvrocks | RUN | 0 (`coverage.txt`) |
+| JuiceFS Lua: `scriptLookup`, `scriptResolve` (read-only; `struct.unpack`, `string.format`, `error()`) | RUN | identical replies on Kvrocks; error texts differ (`ERR running script … ENOENT`) but contain the substrings `handleLuaResult` matches (`probe.diff`) |
+| Other error texts | RUN | Kvrocks prefixes `ERR Invalid argument:` to WRONGTYPE and overflow; JuiceFS does not match these strings (SOURCE `shouldRetry`) |
+| Unexpected Lua error in JuiceFS | SOURCE | disables the script and falls back to HGET+GET with a warning; correctness kept, one extra round trip |
+| EVAL/EVALSHA on Kvrocks with `lua-strict-key-accessing no` (default) | SOURCE | flagged `exclusive`: a global lock over all workers (`cmd_script.cc` GenerateEvalFlags, `kvrocks.conf`); with `yes` scripts run concurrently and any script that touches a key outside KEYS is refused |
+| EVAL/EVALSHA marks its KEYS as modified for WATCH on Kvrocks, even read-only | RUN | `WATCH d1`; another client `EVALSHA lookup d1 …`; `EXEC` aborted on Kvrocks, committed on Redis (`probe.*`) |
+| Effect on JuiceFS: 32 lookup + 8 create/unlink goroutines, 2×4 dirs × 500 files, 20 s | RUN | before: 3 of 3 runs end in EIO after 50 WATCH retries, transactions retried up to 39 times over 11 s; Redis 0 failures (`mixload-kvrocks-before.jsonl`) |
+| Fix `fix/kvrocks-guards` 9fdbc1e: EVALSHA_RO when `COMMAND INFO evalsha_ro` knows it | RUN | Kvrocks: 0 transactions with ≥ 10 retries, lookup 35 k/s, create 288/s; Redis 7: 71 k/s and 965/s before and after (`mixload-ab.jsonl`); regression test red before, green after |
+| SET throughput while 32 clients run each script form (Kvrocks, sync no) | RUN | EVALSHA 21 k/s, EVALSHA_RO 33 k/s, HGET 37 k/s (`interference-nosync.txt`); with sync yes fsync dominates (~3.4 k/s for all) |
+| EXEC when RocksDB cannot append WAL (tmpfs full) | RUN | every queued command returns the IO error; nothing is applied (`enospc.txt`) |
+| After the disk gets space again | RUN | writes keep failing for ≥ 215 s (`Failed to resume DB after retryable IO error: Recovery in progress`) until the process restarts; data before the error intact |
+| JuiceFS on a full Kvrocks disk (`nsgen`, 32 threads, dir quotas) | RUN | EIO to the caller; after restart `usedInodes` and `usedSpace` equal the dumped tree exactly (11 empty files from creates whose write failed) (`enospc-juicefs.txt`) |
+| Dir quota usage after `quota set` on a dir a running client writes into | RUN | not counted until that client's next heartbeat reload (`loadQuotas`, every `Heartbeat`): on Redis and Kvrocks alike, 500 files written right after `quota set` leave usage 0. Not an engine issue; irrelevant when the quota is set on a new empty account dir |
+| #3555 (partial command effects inside EXEC on a runtime error) | REPORTED + SOURCE | open, PR #3556 open; triggers are write-batch memory limit (default 0, off), RocksDB read or decode errors. A full disk fails at commit and is atomic (RUN above). Redis itself does not roll back other commands in EXEC either |
+| Kvrocks archived WAL | SOURCE + RUN | kept 3 h for replication (`rocksdb.wal_ttl_seconds 10800`); in the growth run WAL = 2.7 GB vs SST 1.0 GB at 4 M files: disk = SST + 3 h of writes |
+
+## Kvrocks growth under a 192 MiB cgroup (page cache included)
+
+Script: `rnd/kvrocks-growth.sh`; block cache 64 MB, write buffer 8 MB × 2, `sync yes`, 4 workers. Shared 4 vCPU stand, other experiments ran in parallel.
+
+| Files | SST B/file | WAL GB | cgroup max MB | OOM | hot 10 k stat p50/p99 µs | all stat p50/p99 µs | create p50/p99 µs | server CPU µs/op |
+|---|---|---|---|---|---|---|---|---|
+| 1 M | 248 | 0.66 | 192 | 0 | 334 / 824 | 375 / 1123 | 620 / 3060 | 571 |
+| 2 M | 252 | 1.33 | 192 | 0 | 356 / 857 | 504 / 1326 | 602 / 1307 | 615 |
+| 3 M | 252 | 2.01 | 192 | 0 | 344 / 809 | 599 / 69144 | 592 / 5844 | 693 |
+| 4 M | 251 | 2.68 | 192 | 0 | 279 / 720 | 533 / 1714 | 571 / 1816 | 653 |
+
+RAM stays at the cap while files grow 4×; the hot set stays flat; uniform reads over all files pay disk reads (one p99 spike to 69 ms at 3 M).

@@ -1,45 +1,29 @@
-# RFC: decision after the first R&D round
+# Decision status
 
-Inputs: `rnd/LEDGER.md`, raw results in `rnd/results`. Every number below is RUN on the stand unless marked.
+No production metadata backend is chosen. Branches in this fork are research or upstream fixes, not an architecture decision.
 
-## Options
+## Goal
 
-| Option | What changes | RAM depends on | Status |
-|---|---|---|---|
-| A. Scoped quota refresh | client reads only quota chains it uses, TTL revalidation | active chains per client | branch `feat/quota-scoped-refresh`, reviewed, tests red on main / green |
-| B. Coarse metadata capsules (whole subtree) | cold subtree metadata moves to an immutable object; whole-unit hydration on access | hot units + ~1 KB per cold unit | branch `poc/metadata-capsule`, offline PoC |
-| C. Page-level cold metadata | read single inodes/dentries from indexed pages without hydration | hot records + page cache | not built |
-| D. Disk-backed engine (Kvrocks, TiKV, PostgreSQL) | replace Valkey | block cache budget | Kvrocks measured as control |
+Metadata on local SSD with a bounded RAM cache; object storage holds file data and rare batch backups. A cold stat or lookup must not become an object storage request. Criteria: less CPU, less RAM, fewer object storage requests, lower latency, thousands of clients.
 
-## What the measurements say
+## Gates before choosing a backend
 
-- A removes the O(Q) per-client work: at Q = 10⁵ startup 1.4 ms instead of 154 ms (main) or 7.7 s (v1.4.2), steady traffic flat in Q.
-- B removes the per-inode RAM of cold units: cold namespace ×11 (0.9 M → 9.9 M files) moved `used_memory` from 29.6 MB to 30.6 MB with a fixed hot set; hot latency unchanged. Hydration of a 10 000-file unit: ~87 ms locally, peak RAM = the unit itself.
-- B does not bound RAM of active units: an active unit is fully expanded. RAM follows the size of what is active, not the number of files touched.
-- D (Kvrocks) keeps the Redis API and plateaus at ~0.8 GB RSS with a 512 MB block cache from 3 M to 4 M files; stat is 1.6–1.8× slower (148–175 vs 95 µs p50), create is similar with fsync. Open correctness gates: #3555 reproduced, SELECT is a no-op by default, DBSIZE is async.
+1. Redis/Lua dependency inventory of JuiceFS and of every external writer, verified on each candidate. Status: JuiceFS done for Kvrocks 2.17.0 (`rnd/LEDGER.md`, "Redis/Lua dependency gate"); external writers are checked outside this repository.
+2. Comparative measurements on the same corpus and stand: RAM slope under a cap, p50/p99 of lookup, stat and create, CPU per operation, bytes per file, disk including WAL, behaviour on a full disk and after kill -9. Status: Kvrocks growth done to 4 M files; PostgreSQL, Badger and Valkey under the same cap pending.
+3. Fault semantics: atomicity of EXEC and scripts under storage errors, recovery without operator action. Status: Kvrocks full-disk done (atomic, needs restart); kill -9 with `sync yes` and lost-ACK replay pending.
 
-## Model for the owner's workload
+## Kvrocks after gate 1
 
-Assumptions (PROPOSAL, replace with evidence): 3 projects × 20 000 files per account, unit = project, 234 B per hot file (USER), ~1 KB per cold unit, primary only (replicas ×3).
+- Works with JuiceFS without code changes except one: read-only JuiceFS scripts must use EVALSHA_RO, otherwise every lookup aborts concurrent writes in the same directory (`fix/kvrocks-guards` 9fdbc1e).
+- External writers whose scripts touch keys outside KEYS need `lua-strict-key-accessing no`, which runs every EVAL under a global lock; JuiceFS scripts no longer take it after the fix.
+- Operational costs to price: archived WAL for 3 h of writes, manual restart after a full disk, about 2× lookup and 3× create cost of Redis on the same box.
 
-| Accounts | Files | Valkey today | B, 10 % projects active | B, 1 % active |
-|---|---|---|---|---|
-| 20 | 1.2 M | 0.28 GB | 0.03 GB | 0.003 GB |
-| 1 000 | 60 M | 14 GB | 1.4 GB | 0.14 GB |
-| 100 000 | 6 B | 1.4 TB | 140 GB | 14 GB + 0.3 GB of cold units |
+## Archived
 
-Capsules in object storage: ~160 B per file uncompressed (~1 TB for 6 B files).
+Metadata capsules in object storage (`poc/metadata-capsule`): excluded by the owner (cold access must not become a paid GET); the Big-O audit in the ledger lists the per-client costs that also rule it out at 1 000 clients.
 
-With 2 GiB `maxmemory` and ~4 GiB free per node, B fits 1 000 accounts at 10 % activity, and 100 000 accounts only if activity is well below 1 % or units are smaller. Beyond that the hot working set itself needs C (page-level) or D.
+## Next
 
-## Recommendation
-
-1. Ship A as the first upstream PR series: independent value, current Redis layout, compatible with external writers.
-2. Continue B to an online-capable RFC: pins and fencing for cached inodes, GC and dump over capsules, unit size limits. It already proves that cold namespace RAM can be decoupled without a new metadata server.
-3. Decide C vs D with the owner's active-set numbers: if active projects × size exceeds the RAM budget, B alone is not enough.
-
-## Next falsifying experiments
-
-- Hydration under S3 latency (50–100 ms GET) and a 200 000-file unit: first-access delay and peak RAM.
-- Many concurrent hydrations under a memory budget: admission and backpressure.
-- Kvrocks: which JuiceFS transactions can hit #3555 (any multi-field write that can fail at runtime), and RSS at 10⁸ files.
+- Same growth and mixload runs on PostgreSQL 16 and Badger under the same memory cap.
+- kill -9 of Kvrocks with `sync yes` during mixload, then counters and tree check.
+- Q2 from the owner (cross-account rename, hardlinks, shared directories) decides whether a partitioned metadata service is needed.

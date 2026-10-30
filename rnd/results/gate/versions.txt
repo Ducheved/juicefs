@@ -1,0 +1,2 @@
+kvrocks kvrocks_version:2.17.0
+redis redis_version:7.0.15

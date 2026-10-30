@@ -1,0 +1,4 @@
+{"create":{"ops":19502,"ops_per_s":975.1,"p50_us":3257,"p99_us":13582},"label":"redis-1","lookup":{"ops":1433236,"ops_per_s":71661.8,"p50_us":386,"p99_us":1501}}
+{"create":{"ops":9,"ops_per_s":0.45,"p50_us":9110029,"p99_us":20105879},"label":"kv-default-2","lookup":{"ops":506288,"ops_per_s":25314.4,"p50_us":748,"p99_us":6790}}
+{"create":{"ops":19368,"ops_per_s":968.4,"p50_us":3222,"p99_us":13584},"label":"redis-2","lookup":{"ops":1429356,"ops_per_s":71467.8,"p50_us":390,"p99_us":1441}}
+{"create":{"ops":19445,"ops_per_s":972.25,"p50_us":3227,"p99_us":13100},"label":"redis-3","lookup":{"ops":1434947,"ops_per_s":71747.35,"p50_us":391,"p99_us":1443}}

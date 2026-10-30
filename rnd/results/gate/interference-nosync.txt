@@ -1,0 +1,10 @@
+kvrocks 2.17.0 rocksdb.write_options.sync no, 4 vCPU shared with the benchmark client
+rep1 background=evalsha set: set k v: 22805.02 requests per second, p50=0.423 msec
+rep1 background=evalsha_ro set: set k v: 31914.89 requests per second, p50=0.327 msec
+rep1 background=hget set: set k v: 37406.48 requests per second, p50=0.271 msec
+rep2 background=evalsha set: set k v: 20797.23 requests per second, p50=0.207 msec
+rep2 background=evalsha_ro set: set k v: 33651.15 requests per second, p50=0.359 msec
+rep2 background=hget set: set k v: 34013.61 requests per second, p50=0.279 msec
+rep3 background=evalsha set: set k v: 20394.29 requests per second, p50=0.199 msec
+rep3 background=evalsha_ro set: set k v: 34032.90 requests per second, p50=0.415 msec
+rep3 background=hget set: set k v: 38314.18 requests per second, p50=0.287 msec

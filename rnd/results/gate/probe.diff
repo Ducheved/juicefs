@@ -1,0 +1,12 @@
+10,12c10,12
+< wrongtype: WRONGTYPE Operation against a key holding the wrong kind of value
+< overflow: ERR increment or decrement would overflow
+< watch d1 then [evalsha sub] by another client: exec committed
+---
+> wrongtype: ERR Invalid argument: WRONGTYPE Operation against a key holding the wrong kind of value
+> overflow: ERR Invalid argument: increment or decrement would overflow
+> watch d1 then [evalsha sub] by another client: exec aborted
+15c15
+< watch d1 then [eval d1] by another client: exec committed
+---
+> watch d1 then [eval d1] by another client: exec aborted
