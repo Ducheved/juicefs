@@ -291,6 +291,57 @@ func (tx *metadTxn) gets(keys ...[]byte) [][]byte {
 	return values
 }
 
+func (tx *metadTxn) lookup(entry, head, tail []byte) ([]byte, []byte, bool) {
+	if _, ok := tx.buffer[string(entry)]; ok {
+		v := tx.get(entry)
+		if v == nil {
+			return nil, nil, true
+		}
+		target, err := proto.EntryTarget(v, head, tail)
+		if err != nil {
+			panic(err)
+		}
+		return v, tx.get(target), true
+	}
+	e := proto.NewEncoder(proto.OpLookup)
+	e.U64(tx.snapshot)
+	e.Bytes(entry)
+	e.Bytes(head)
+	e.Bytes(tail)
+	_, body, err := tx.c.call(e.Frame())
+	if err != nil {
+		panic(err)
+	}
+	d := proto.NewDecoder(body)
+	tx.snapshot = d.U64()
+	tx.read[string(entry)] = struct{}{}
+	var v, a []byte
+	if d.U8() == 1 {
+		v = d.Bytes()
+		if d.U8() == 1 {
+			a = d.Bytes()
+		}
+	}
+	if err := d.Err(); err != nil {
+		panic(err)
+	}
+	if v == nil {
+		return nil, nil, true
+	}
+	target, err := proto.EntryTarget(v, head, tail)
+	if err != nil {
+		panic(err)
+	}
+	tx.read[string(target)] = struct{}{}
+	if w, ok := tx.buffer[string(target)]; ok {
+		a = nil
+		if !w.deleted {
+			a = w.value
+		}
+	}
+	return v, a, true
+}
+
 func (tx *metadTxn) buffered(begin, end []byte) []string {
 	var keys []string
 	for k := range tx.buffer {

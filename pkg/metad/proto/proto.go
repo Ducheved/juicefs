@@ -30,6 +30,7 @@ const (
 	OpCommit
 	OpDeleteRange
 	OpPing
+	OpLookup
 )
 
 const (
@@ -166,6 +167,16 @@ func ReadFrame(r *bufio.Reader) (byte, []byte, error) {
 		return 0, nil, err
 	}
 	return body[0], body[1:], nil
+}
+
+func EntryTarget(entry, head, tail []byte) ([]byte, error) {
+	if len(entry) < 9 {
+		return nil, fmt.Errorf("metad: entry of %d bytes", len(entry))
+	}
+	k := make([]byte, 0, len(head)+8+len(tail))
+	k = append(k, head...)
+	k = binary.LittleEndian.AppendUint64(k, binary.BigEndian.Uint64(entry[1:9]))
+	return append(k, tail...), nil
 }
 
 func EncodeCommit(c *Commit) []byte {

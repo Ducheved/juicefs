@@ -56,6 +56,55 @@ func TestMetadClient(t *testing.T) {
 	testMeta(t, m)
 }
 
+func TestMetadLookup(t *testing.T) {
+	c, err := newMetadClient(startMetad(t, 5*time.Second) + "/jfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &kvMeta{}
+	head, tail := m.fmtKey("A"), []byte("I")
+	check := func(tx *kvTxn, name string, ino Ino, attr string) {
+		v, a, joined := tx.lookup(m.entryKey(1, name), head, tail)
+		if !joined {
+			t.Fatalf("lookup %s: not joined", name)
+		}
+		if ino == 0 {
+			if v != nil || a != nil {
+				t.Fatalf("lookup %s: expect nothing, got %x %q", name, v, a)
+			}
+			return
+		}
+		if _, got := m.parseEntry(v); got != ino {
+			t.Fatalf("lookup %s: expect inode %d, got %d", name, ino, got)
+		}
+		if string(a) != attr {
+			t.Fatalf("lookup %s: expect attr %q, got %q", name, attr, a)
+		}
+	}
+	if err := c.txn(Background(), func(tx *kvTxn) error {
+		tx.set(m.entryKey(1, "f"), m.packEntry(TypeFile, 0x0102030405))
+		tx.set(m.inodeKey(0x0102030405), []byte("attr-f"))
+		tx.set(m.entryKey(1, "g"), m.packEntry(TypeFile, 7))
+		return nil
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.txn(Background(), func(tx *kvTxn) error {
+		check(tx, "f", 0x0102030405, "attr-f")
+		check(tx, "g", 7, "")
+		check(tx, "none", 0, "")
+		tx.set(m.inodeKey(7), []byte("attr-g"))
+		check(tx, "g", 7, "attr-g")
+		tx.set(m.entryKey(1, "h"), m.packEntry(TypeFile, 0x0102030405))
+		check(tx, "h", 0x0102030405, "attr-f")
+		tx.delete(m.inodeKey(0x0102030405))
+		check(tx, "f", 0x0102030405, "")
+		return nil
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMetadTransactions(t *testing.T) {
 	c, err := newMetadClient(startMetad(t, time.Second))
 	if err != nil {

@@ -56,6 +56,10 @@ func (tx *prefixTxn) scan(begin, end []byte, keysOnly bool, handler func(k, v []
 	})
 }
 
+func (tx *prefixTxn) lookup(entry, head, tail []byte) ([]byte, []byte, bool) {
+	return tx.kvTxn.lookup(tx.realKey(entry), tx.realKey(head), tail)
+}
+
 type prefixIterator struct {
 	kvIterator
 	prefix []byte

@@ -199,6 +199,8 @@ func (s *Server) dispatch(op byte, body []byte) []byte {
 		return s.get(body)
 	case proto.OpScan:
 		return s.scan(body)
+	case proto.OpLookup:
+		return s.lookup(body)
 	case proto.OpCommit:
 		c, err := proto.DecodeCommit(body)
 		if err != nil {
@@ -278,17 +280,60 @@ func (s *Server) get(body []byte) []byte {
 	e := proto.NewEncoder(proto.StatusOK)
 	e.U64(sn.seq)
 	for _, k := range keys {
-		v, closer, err := sn.snap.Get(k)
-		if errors.Is(err, pebble.ErrNotFound) {
-			e.U8(0)
-			continue
-		}
-		if err != nil {
+		if err := read(sn, k, e); err != nil {
 			return failure(proto.StatusError, err)
 		}
-		e.U8(1)
-		e.Bytes(v)
-		_ = closer.Close()
+	}
+	return e.Frame()
+}
+
+func read(sn *snapshot, key []byte, e *proto.Encoder) error {
+	v, closer, err := sn.snap.Get(key)
+	if errors.Is(err, pebble.ErrNotFound) {
+		e.U8(0)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	e.U8(1)
+	e.Bytes(v)
+	return closer.Close()
+}
+
+func (s *Server) lookup(body []byte) []byte {
+	d := proto.NewDecoder(body)
+	seq := d.U64()
+	entry, head, tail := d.Bytes(), d.Bytes(), d.Bytes()
+	if err := d.Err(); err != nil {
+		return failure(proto.StatusError, err)
+	}
+	sn, err := s.acquire(seq)
+	if err != nil {
+		return readFailure(err)
+	}
+	defer s.release(sn)
+	e := proto.NewEncoder(proto.StatusOK)
+	e.U64(sn.seq)
+	v, closer, err := sn.snap.Get(entry)
+	if errors.Is(err, pebble.ErrNotFound) {
+		e.U8(0)
+		return e.Frame()
+	}
+	if err != nil {
+		return failure(proto.StatusError, err)
+	}
+	e.U8(1)
+	e.Bytes(v)
+	target, err := proto.EntryTarget(v, head, tail)
+	if cerr := closer.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = read(sn, target, e)
+	}
+	if err != nil {
+		return failure(proto.StatusError, err)
 	}
 	return e.Frame()
 }

@@ -87,6 +87,17 @@ type kvTxn struct {
 	onCommit func(func())
 }
 
+type lookupKvTxn interface {
+	lookup(entry, head, tail []byte) ([]byte, []byte, bool)
+}
+
+func (tx *kvTxn) lookup(entry, head, tail []byte) ([]byte, []byte, bool) {
+	if lt, ok := tx.kvtxn.(lookupKvTxn); ok {
+		return lt.lookup(entry, head, tail)
+	}
+	return tx.get(entry), nil, false
+}
+
 func (tx *kvTxn) deleteKeys(prefix []byte) {
 	tx.scan(prefix, nextKey(prefix), true, func(k, v []byte) bool {
 		tx.delete(k)
@@ -1216,7 +1227,7 @@ func (m *kvMeta) deleteKeys(keys ...[]byte) error {
 
 func (m *kvMeta) doLookup(ctx Context, parent Ino, name string, inode *Ino, attr *Attr) syscall.Errno {
 	return errno(m.client.simpleTxn(ctx, func(tx *kvTxn) error {
-		buf := tx.get(m.entryKey(parent, name))
+		buf, a, joined := tx.lookup(m.entryKey(parent, name), m.fmtKey("A"), []byte("I"))
 		if buf == nil {
 			return syscall.ENOENT
 		}
@@ -1228,7 +1239,9 @@ func (m *kvMeta) doLookup(ctx Context, parent Ino, name string, inode *Ino, attr
 		if m.conf.OpenCache > 0 && m.of.Check(foundIno, attr) {
 			return nil
 		}
-		a := tx.get(m.inodeKey(foundIno))
+		if !joined {
+			a = tx.get(m.inodeKey(foundIno))
+		}
 		if a != nil {
 			m.parseAttr(a, attr)
 			m.of.Update(foundIno, attr)
