@@ -1,0 +1,1 @@
+{"Root":2,"State":"","Epoch":2,"Owner":4,"Object":"meta/capsules/2/1","Sum":"ab36378eb1f8070341eec6d4e42df845ee7ba76240f67dcd148f856eab8e4fde","Size":32028193,"Records":401001,"Inodes":200201,"Keys":400401} took=2.081331164s

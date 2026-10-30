@@ -1,0 +1,12 @@
+round=0 cold_units=90 cold_files=900000 used_memory=29611448 keys=202218 evict_s=14.001690903 probe={"create_p50_us":554,"create_p99_us":1294,"label":"r0","stat_p50_us":96,"stat_p99_us":161}
+round=1 cold_units=190 cold_files=1900000 used_memory=29684808 keys=202418 evict_s=18.939641170 probe={"create_p50_us":576,"create_p99_us":1352,"label":"r1","stat_p50_us":95,"stat_p99_us":140}
+round=2 cold_units=290 cold_files=2900000 used_memory=30185448 keys=202618 evict_s=17.830349545 probe={"create_p50_us":552,"create_p99_us":1256,"label":"r2","stat_p50_us":100,"stat_p99_us":270}
+round=3 cold_units=390 cold_files=3900000 used_memory=30234704 keys=202818 evict_s=18.047531150 probe={"create_p50_us":509,"create_p99_us":3300,"label":"r3","stat_p50_us":100,"stat_p99_us":215}
+round=4 cold_units=490 cold_files=4900000 used_memory=30283792 keys=203018 evict_s=17.629983417 probe={"create_p50_us":560,"create_p99_us":1179,"label":"r4","stat_p50_us":94,"stat_p99_us":129}
+round=5 cold_units=590 cold_files=5900000 used_memory=32312256 keys=203218 evict_s=16.431386843 probe={"create_p50_us":631,"create_p99_us":1027,"label":"r5","stat_p50_us":128,"stat_p99_us":421}
+round=6 cold_units=690 cold_files=6900000 used_memory=43532016 keys=203418 evict_s=17.948301124 probe={"create_p50_us":676,"create_p99_us":1663,"label":"r6","stat_p50_us":132,"stat_p99_us":507}
+round=7 cold_units=790 cold_files=7900000 used_memory=55167096 keys=203618 evict_s=17.503285633 probe={"create_p50_us":667,"create_p99_us":1079,"label":"r7","stat_p50_us":133,"stat_p99_us":457}
+round=8 cold_units=890 cold_files=8900000 used_memory=58662488 keys=203818 evict_s=15.960898154 probe={"create_p50_us":588,"create_p99_us":1584,"label":"r8","stat_p50_us":103,"stat_p99_us":188}
+round=9 cold_units=990 cold_files=9900000 used_memory=30570392 keys=204018 evict_s=15.344693625 probe={"create_p50_us":588,"create_p99_us":1733,"label":"r9","stat_p50_us":95,"stat_p99_us":143}
+1.6G	/tmp/rnd-bucket/rnd/meta/capsules
+== done 23:01:54

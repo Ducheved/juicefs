@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/juicedata/juicefs/pkg/meta"
+	"github.com/juicedata/juicefs/rnd/corpus"
 )
 
 func pct(d []time.Duration, p float64) float64 {
@@ -29,6 +30,7 @@ func main() {
 	dirs := flag.Int("dirs", 100, "dirs per user")
 	files := flag.Int("files", 100, "files per dir")
 	n := flag.Int("n", 5000, "operations per kind")
+	random := flag.Bool("random", false, "names from rnd/corpus as created by nsgen -random")
 	label := flag.String("label", "", "label")
 	flag.Parse()
 	m := meta.NewClient(*metaURL, meta.DefaultConf())
@@ -42,7 +44,8 @@ func main() {
 	ctx := meta.Background()
 	var stat, create []time.Duration
 	for i := 0; i < *n; i++ {
-		p := fmt.Sprintf("/u%06d/d%04d/f%05d", rand.Intn(*users), rand.Intn(*dirs), rand.Intn(*files))
+		u, d, k := rand.Intn(*users), rand.Intn(*dirs), rand.Intn(*files)
+		p := fmt.Sprintf("/u%06d/%s/%s", u, corpus.DirName(*random, u, d), corpus.FileName(*random, u**dirs**files+d**files+k, k))
 		var ino meta.Ino
 		var attr meta.Attr
 		t := time.Now()
@@ -57,7 +60,8 @@ func main() {
 	for i := 0; i < *n; i++ {
 		var dir, ino meta.Ino
 		var attr meta.Attr
-		p := fmt.Sprintf("/u%06d/d%04d", rand.Intn(*users), rand.Intn(*dirs))
+		u, d := rand.Intn(*users), rand.Intn(*dirs)
+		p := fmt.Sprintf("/u%06d/%s", u, corpus.DirName(*random, u, d))
 		if st := resolve(m, p, &dir, &attr); st != 0 {
 			log.Fatalf("resolve %s: %s", p, st)
 		}

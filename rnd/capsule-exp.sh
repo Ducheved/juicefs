@@ -24,18 +24,19 @@ for u in 3 4 5 6 7; do
   peak=0
   ( while true; do v=$(mem); echo $v; sleep 0.05; done ) > $R/peak-$u.txt &
   P=$!
-  $J metadata prefetch $M /u00000$u --log-level error >> $R/hydrate.log 2>&1 || echo "prefetch $u failed"
+  $J metadata prefetch $M /u00000$u --log-level error >> $R/hydrate.log 2>&1 || { echo "prefetch $u failed"; exit 1; }
   kill $P
   echo "hydrated u00000$u peak_used_memory=$(sort -n $R/peak-$u.txt | tail -1) used_memory=$(mem)"
 done
 for u in 3 4; do
   $J dump $M --subdir /u00000$u $R/dump-after-$u.json --log-level error >/dev/null 2>&1
-  python3 - $R/dump-before-$u.json $R/dump-after-$u.json <<'PY'
+  python3 - $R/dump-before-$u.json $R/dump-after-$u.json <<'PY' || exit 1
 import json,sys
 a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
 for d in (a,b):
     d.pop("Setting",None); d.pop("Counters",None)
 print("dump identical" if a==b else "dump DIFFERS", sys.argv[1].split('/')[-1])
+sys.exit(0 if a==b else 1)
 PY
 done
 $J metadata status $M --log-level error | wc -l

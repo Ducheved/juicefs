@@ -1,0 +1,5 @@
+{"Root":5,"State":"","Epoch":91,"Owner":92,"Object":"meta/capsules/5/4","Sum":"4b222c35cf16f8524203334c337d56cb63ffef9cb7f7dd2b4f87f28e97b513ec","Size":1614776,"Records":20501,"Inodes":10101,"Keys":20201} took=87.365952ms
+{"Root":6,"State":"","Epoch":92,"Owner":93,"Object":"meta/capsules/6/5","Sum":"478f7dffcd84276150e600a461f1615b95c3e577c9e837b68ffb6f09daf63d55","Size":1614776,"Records":20501,"Inodes":10101,"Keys":20201} took=81.264656ms
+{"Root":7,"State":"","Epoch":93,"Owner":94,"Object":"meta/capsules/7/6","Sum":"ac4613c59fb68c93a8abf574cb66db55e11ecb60d0fb90feaca376f238bfad59","Size":1614776,"Records":20501,"Inodes":10101,"Keys":20201} took=90.236736ms
+{"Root":8,"State":"","Epoch":94,"Owner":95,"Object":"meta/capsules/8/7","Sum":"25b8b2b279421c399e52224bc70c4d42c05acb8d78019ba4baa12fb49f15a43a","Size":1614776,"Records":20501,"Inodes":10101,"Keys":20201} took=90.559526ms
+{"Root":9,"State":"","Epoch":95,"Owner":96,"Object":"meta/capsules/9/8","Sum":"35cc6c54f5695372581036a54d8e9a34a5ad2c61b610b2587b5abe159437e0bc","Size":1614776,"Records":20501,"Inodes":10101,"Keys":20201} took=87.747008ms

@@ -1,0 +1,5 @@
+round=0 files=1000000 gen_s=574 kvrocks_rss_kb=192792 disk=843M probe={"create_p50_us":516,"create_p99_us":1036,"label":"k0","stat_p50_us":154,"stat_p99_us":334}
+round=1 files=2000000 gen_s=600 kvrocks_rss_kb=447460 disk=1.9G probe={"create_p50_us":506,"create_p99_us":1419,"label":"k1","stat_p50_us":170,"stat_p99_us":493}
+round=2 files=3000000 gen_s=589 kvrocks_rss_kb=766420 disk=2.8G probe={"create_p50_us":549,"create_p99_us":1854,"label":"k2","stat_p50_us":175,"stat_p99_us":561}
+round=3 files=4000000 gen_s=590 kvrocks_rss_kb=793504 disk=3.7G probe={"create_p50_us":612,"create_p99_us":2214,"label":"k3","stat_p50_us":148,"stat_p99_us":465}
+== done 23:42:20

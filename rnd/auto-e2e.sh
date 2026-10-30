@@ -8,7 +8,8 @@ echo "keys before: $(redis-cli -n 13 dbsize) mem: $(redis-cli info memory | grep
 $C metadata auto-evict $M --idle 100s --min-resident 0 --once --log-level warn
 echo "keys after: $(redis-cli -n 13 dbsize)"
 $C metadata status $M --log-level error | cut -c1-120
-(cd $E/a && find home -type f -exec sha256sum {} + | sort > $E/manifest2.txt); cmp $E/manifest.txt $E/manifest2.txt && echo "manifest equal after transparent load"
+(cd $E/a && find home -type f -exec sha256sum {} + | sort > $E/manifest2.txt); cmp $E/manifest.txt $E/manifest2.txt || { echo "manifest differs after transparent load"; exit 1; }
+echo "manifest equal after transparent load"
 echo "keys after read: $(redis-cli -n 13 dbsize)"
 $C metadata status $M --log-level error | wc -l
 grep -c "Loaded metadata" $E/a.log $E/b.log

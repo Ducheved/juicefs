@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/juicedata/juicefs/pkg/meta"
+	"github.com/juicedata/juicefs/rnd/corpus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -175,6 +176,7 @@ func main() {
 	measure := flag.Bool("families", true, "measure memory by key family")
 	reset := flag.Bool("reset", true, "reset meta before generating")
 	offset := flag.Int("user-offset", 0, "first user index")
+	random := flag.Bool("random", false, "realistic names and sizes from rnd/corpus")
 	flag.Parse()
 
 	conf := meta.DefaultConf()
@@ -249,7 +251,7 @@ func main() {
 			for j := range jobs {
 				var dino meta.Ino
 				var attr meta.Attr
-				dname := fmt.Sprintf("d%04d", j.dir)
+				dname := corpus.DirName(*random, j.user+*offset, j.dir)
 				check(m.Mkdir(ctx, userIno[j.user], dname, 0755, 0, 0, &dino, &attr), "mkdir dir")
 				atomic.AddInt64(&dirs, 1)
 				if sh.DirQuota {
@@ -263,7 +265,7 @@ func main() {
 				}
 				for k := 0; k < sh.FilesPerDir; k++ {
 					seq := j.user*sh.DirsPerUser*sh.FilesPerDir + j.dir*sh.FilesPerDir + k
-					fname := fmt.Sprintf("f%05d", k)
+					fname := corpus.FileName(*random, seq+*offset*sh.DirsPerUser*sh.FilesPerDir, k)
 					if sh.SymlinkRatio > 0 && seq%int(1/sh.SymlinkRatio) == 0 {
 						var sino meta.Ino
 						check(m.Symlink(ctx, dino, fname, "../target/"+fname, &sino, &attr), "symlink")
@@ -281,7 +283,7 @@ func main() {
 						for s := 0; s < sh.Slices; s++ {
 							var sid uint64
 							check(m.NewSlice(ctx, &sid), "new slice")
-							size := uint32(4 << 10)
+							size := corpus.FileSize(*random, seq+*offset*sh.DirsPerUser*sh.FilesPerDir)
 							if sh.Chunks > 1 {
 								size = meta.ChunkSize / uint32(sh.Slices)
 							}

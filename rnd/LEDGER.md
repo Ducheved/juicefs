@@ -101,7 +101,7 @@ Still open (PoC limits): read-only mounts are not registered as sessions and can
 
 | Item | Label | Value |
 |---|---|---|
-| Namespace 1 → 4 M files (100 users × 100 dirs × 100 files per round, per-user dir quota) | RUN | DB 599 / 1188 / 1769 / 2337 MB (≈ 585 B/file on disk), PSS of all postgres processes 0.48 / 0.58 / 0.58 / 0.59 GB (plateau at shared_buffers) (`rnd/results/pg`) |
+| Namespace 1 → 4 M files (100 users × 100 dirs × 100 files per round, per-user dir quota) | RUN | DB 599 / 1188 / 1769 / 2337 MiB (`pg_size_pretty` uses binary units; ≈ 613 B/file on disk), PSS of all postgres processes 0.48 / 0.58 / 0.58 / 0.59 GB (plateau at shared_buffers) (`rnd/results/pg`) |
 | Bulk create, 32 threads | RUN | ≈ 2 600 files/s (383–436 s per million) |
 | Hot probe at 4 M files (path walk by Lookup, 4 round trips) | RUN | stat p50 598–633 µs, p99 2.0–2.3 ms; create p50 1.08 ms, p99 2.4–2.6 ms |
 | Not comparable | NOTE | Valkey/Kvrocks probes used `Resolve` (one Lua call); `Resolve` is ENOTSUP on SQL, so the PG probe walks with `Lookup` |
@@ -139,7 +139,9 @@ Corrections (2026-10-30): the PostgreSQL control ran on PostgreSQL 16, not 17; u
 
 ## Metadata on SSD with a bounded RAM cap (scale model of 39 M files / 2 GiB)
 
-Their case: 39 M files ≈ 8.6 GiB in Valkey (≈ 237 B/file) against a 2 GiB ceiling. On Kvrocks the same namespace is ≈ 36 GB on SSD (≈ 925 B/file), so 2 GiB is ≈ 5.5 % of the data. Model: Kvrocks 2.17.0 with 4 M files (3.7 GB), container memory capped by cgroup including the page cache, host caches dropped before each run, `sync yes`, probe of 5 000 random stats and creates per working set (`rnd/results/kvrocks-cap`).
+WITHDRAWN (2026-10-30): the data size during this run was not measured. The 3.7 GB figure came from the earlier load and included WAL and uncompressed L0 files; after the database was reopened and compacted the data directory held 351 MB for 4 M synthetic files (≈ 88 B/file, highly compressible sequential names). The cap-to-data ratio during the run is unknown (roughly 25–70 %, not 5.5 %), so the conclusion "latency does not depend on the working set at ≈ 5 % of data" is not supported. The table is kept as a raw record; the replacement is the `kvrocks-growth` run below (realistic names and sizes from `rnd/corpus`, SST bytes measured after compactions settle, data generated under the cap).
+
+Their case: 39 M files ≈ 8.6 GiB in Valkey (≈ 237 B/file) against a 2 GiB ceiling. Model as run: Kvrocks 2.17.0 with 4 M synthetic files, container memory capped by cgroup including the page cache, host caches dropped before each run, `sync yes`, probe of 5 000 random stats and creates per working set (`rnd/results/kvrocks-cap`).
 
 | Cap (block cache) | Working set | stat p50 / p99 | create p50 / p99 | cgroup memory | OOM |
 |---|---|---|---|---|---|
@@ -193,3 +195,5 @@ Decision (owner, 2026-10-30): no on-demand metadata reads from S3 in the main de
 - Compression of JuiceFS-like records (local run, zstd-3 on 4–64 KiB blocks): 3.5–4× for FUSE-created metadata, 6–7× for bulk-imported, 2.2× worst case; lz4 2.5–4×. RocksDB in Kvrocks defaults to snappy from level 2 only.
 - Valkey bytes per small key: 7.2 102.5 B, 9.1 64 B (Percona). Valkey listpack buckets would need `hash-max-listpack-value` ≥ 128 for JuiceFS attributes.
 - S3 Standard small GET: p50 ≈ 30–40 ms, p99 ≈ 170 ms; ≈ 30 ms + 20 ms/MiB (VLDB'23). A cold stat served from S3 would cost one paid GET and tens of milliseconds, which is why on-demand S3 metadata is out of the main design.
+
+Evidence fixes (2026-10-30, after external review of `cd780bb`): raw results of the growth, Kvrocks, big-unit and capsule runs are now committed under `rnd/results`; `capsule-exp.sh` and `auto-e2e.sh` exit non-zero on a failed prefetch, dump or manifest comparison; the generator used for the PostgreSQL run is `rnd/nsgen` (the `nsgen2` binary was an uncommitted build of it); `rnd/corpus` gives realistic, collision-free names and sizes shared by `nsgen -random` and `probe -random`.
