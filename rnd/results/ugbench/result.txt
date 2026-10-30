@@ -1,0 +1,2 @@
+base RESULT Q=100000 refresh=316.259563ms bytes_per_refresh=7300802 flush_during_refresh=304.782301ms cached_users=100000
+new RESULT Q=100000 refresh=164.375µs bytes_per_refresh=562 flush_during_refresh=176.262µs cached_users=10

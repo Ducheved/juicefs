@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/juicedata/juicefs/pkg/meta"
@@ -44,7 +46,7 @@ func main() {
 		var ino meta.Ino
 		var attr meta.Attr
 		t := time.Now()
-		if st := m.Resolve(ctx, meta.RootInode, p, &ino, &attr, false); st != 0 {
+		if st := resolve(m, p, &ino, &attr); st != 0 {
 			log.Fatalf("resolve %s: %s", p, st)
 		}
 		if st := m.GetAttr(ctx, ino, &attr); st != 0 {
@@ -56,7 +58,7 @@ func main() {
 		var dir, ino meta.Ino
 		var attr meta.Attr
 		p := fmt.Sprintf("/u%06d/d%04d", rand.Intn(*users), rand.Intn(*dirs))
-		if st := m.Resolve(ctx, meta.RootInode, p, &dir, &attr, false); st != 0 {
+		if st := resolve(m, p, &dir, &attr); st != 0 {
 			log.Fatalf("resolve %s: %s", p, st)
 		}
 		name := fmt.Sprintf("probe-%d", i)
@@ -72,4 +74,15 @@ func main() {
 	}
 	res := map[string]any{"label": *label, "stat_p50_us": pct(stat, 0.5), "stat_p99_us": pct(stat, 0.99), "create_p50_us": pct(create, 0.5), "create_p99_us": pct(create, 0.99)}
 	_ = json.NewEncoder(os.Stdout).Encode(res)
+}
+
+func resolve(m meta.Meta, p string, ino *meta.Ino, attr *meta.Attr) syscall.Errno {
+	cur := meta.RootInode
+	for _, name := range strings.Split(strings.Trim(p, "/"), "/") {
+		if st := m.Lookup(meta.Background(), cur, name, &cur, attr, false); st != 0 {
+			return st
+		}
+	}
+	*ino = cur
+	return 0
 }

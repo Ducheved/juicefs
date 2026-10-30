@@ -1,0 +1,85 @@
+package meta
+
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func netOut(m *redisMeta) int64 {
+	raw, _ := m.rdb.Info(Background(), "stats").Result()
+	for _, l := range strings.Split(raw, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(l), "total_net_output_bytes:"); ok {
+			n, _ := strconv.ParseInt(v, 10, 64)
+			return n
+		}
+	}
+	return 0
+}
+
+func TestUGBench(t *testing.T) {
+	q, _ := strconv.Atoi(os.Getenv("UGQ"))
+	conf := testConfig()
+	mm, err := newRedisMeta("redis", "127.0.0.1:6379/15", conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mm.(*redisMeta)
+	_ = m.Reset()
+	if err = m.Init(&Format{Name: "ugb", DirStats: true, UserGroupQuota: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx := Background()
+	cfg, _ := m.getQuotaKeys(UserQuotaType)
+	for i := 0; i < q; i += 1000 {
+		_, err := m.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+			for j := i; j < i+1000 && j < q; j++ {
+				f := strconv.Itoa(100000 + j)
+				buf := make([]byte, 16)
+				binary.BigEndian.PutUint64(buf, 1<<30)
+				binary.BigEndian.PutUint64(buf[8:], 1000)
+				p.HSet(ctx, cfg.quotaKey, f, buf)
+				p.HSet(ctx, cfg.usedSpaceKey, f, "0")
+				p.HSet(ctx, cfg.usedInodesKey, f, "0")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	mm2, _ := newRedisMeta("redis", "127.0.0.1:6379/15", conf)
+	c := mm2.(*redisMeta)
+	if _, err := c.Load(true); err != nil {
+		t.Fatal(err)
+	}
+	c.loadQuotas()
+	for u := 0; u < 10; u++ {
+		c.checkQuota(ctx, 4096, 1, uint32(100000+u), uint32(100000+u))
+		c.updateUserGroupStat(ctx, uint32(100000+u), uint32(100000+u), 4096, 1)
+	}
+	c.loadQuotas()
+	n := 20
+	o0 := netOut(m)
+	t0 := time.Now()
+	for i := 0; i < n; i++ {
+		c.loadQuotas()
+	}
+	per := time.Since(t0) / time.Duration(n)
+	bytes := (netOut(m) - o0) / int64(n)
+	done := make(chan struct{})
+	go func() { c.loadQuotas(); close(done) }()
+	time.Sleep(time.Millisecond)
+	c.updateUserGroupStat(ctx, 100000, 100000, 4096, 1)
+	f0 := time.Now()
+	c.baseMeta.doFlushQuotas()
+	flush := time.Since(f0)
+	<-done
+	fmt.Printf("RESULT Q=%d refresh=%s bytes_per_refresh=%d flush_during_refresh=%s cached_users=%d\n", q, per, bytes, flush, len(c.userQuotas))
+}

@@ -96,3 +96,41 @@ Still open (PoC limits): read-only mounts are not registered as sessions and can
 | Upstream main binary on the volume | RUN | `mount` and `gc` refuse: incompatible metadata version 2 |
 | Image on `juicedata/mount:ce-v1.4.2` with the integration binary (static, musl) | RUN | mount in container, online evict, transparent load, contents identical |
 | `quota set` without `--strict` on a directory being written records usage from unflushed dir stats | RUN on official v1.4.2 and on the fork | 286 / 261 instead of 301 inodes; `quota check --strict` reports inconsistent. Upstream behavior |
+
+## PostgreSQL 17 (control, PG-only)
+
+| Item | Label | Value |
+|---|---|---|
+| Namespace 1 → 4 M files (100 users × 100 dirs × 100 files per round, per-user dir quota) | RUN | DB 599 / 1188 / 1769 / 2337 MB (≈ 585 B/file on disk), PSS of all postgres processes 0.48 / 0.58 / 0.58 / 0.59 GB (plateau at shared_buffers) (`rnd/results/pg`) |
+| Bulk create, 32 threads | RUN | ≈ 2 600 files/s (383–436 s per million) |
+| Hot probe at 4 M files (path walk by Lookup, 4 round trips) | RUN | stat p50 598–633 µs, p99 2.0–2.3 ms; create p50 1.08 ms, p99 2.4–2.6 ms |
+| Not comparable | NOTE | Valkey/Kvrocks probes used `Resolve` (one Lua call); `Resolve` is ENOTSUP on SQL, so the PG probe walks with `Lookup` |
+
+## Automatic eviction (Track A)
+
+| Item | Label | Value |
+|---|---|---|
+| Access recording: one HSET+HINCRBY per unit per client per minute; units resolved through cached parents without hooks | RUN | `TestRedisCapsuleAutoEvict` |
+| Scan guard: > 100 units in one minute are not recorded | RUN | mutation removing the guard fails the test |
+| Idle eviction, `--max-units` limit, min residency after load, pressure order by decayed hits | RUN | each mutation fails the test |
+| Two FUSE mounts, 10 users, 3 used, `auto-evict --idle 100s --once` | RUN | 7 idle units evicted, used ones kept, keys 459 → 169, all 200 sha256 equal after transparent load through the other mount |
+| Eviction rate | RUN | 26.8 s for 7 units (≈ 3.8 s/unit, dominated by two ACK rounds and the drop grace); 10 k idle units/day needs batched eviction |
+
+## Literature (bounded metadata caches)
+
+- Every surveyed system bounded by memory caches inode/dentry/dirfrag granularity (CephFS dirfrag ≤ 10 k entries, InfiniFS, IndexFS, λFS, Alluxio 2); none loads whole subtrees. Whole-unit capsules fit only when the unit is the access unit (an account).
+- Scan resistance: ARC/2Q-style probation; Ceph throttles cap acquisition on readdir and recalls caps from idle sessions.
+- Directory rename/setattr is ≈ 0.008 % of operations in Pangu traces (InfiniFS), which makes lazily validated caches viable.
+- Alluxio 2.0 (heap cache over RocksDB): ≈ 1 KB/inode on heap vs ≈ 500 B on disk, ~50 % CPU in (de)serialization when missing.
+- No source publishes cold-miss latency; measure it ourselves.
+
+## User/group quota refresh (C × Q)
+
+| Item | Label | Value |
+|---|---|---|
+| Before: each client on every refresh HSCANs all user and group quotas under `quotasFlushLock` | SOURCE | `v1.4.2`, `upstream/main` `loadQuotas` |
+| Q = 100 000 uid quotas, one client, 10 uids in use (`zz_ugbench_test.go`, base vs change, same Valkey) | RUN | refresh 316 ms → 0.16 ms, 7.3 MB → 562 B per refresh, a flush during refresh waited 305 ms → 0.18 ms |
+| C = 1 000 clients, 12 s heartbeat, extrapolated | CALC | ≈ 610 MB/s → ≈ 47 KB/s out of Valkey |
+| Miss on first write of a uid/gid: one HMGET for uid and gid together, fail-closed EIO after 3 failed loads | RUN | `testUserGroupQuotaRefresh` on Redis, SQLite, MemKV |
+| Refresh outside the flush lock; a flush during the read keeps local usage and the stale ids are reread | RUN | mutations removing the generation check or the reread fail the test |
+| Adversarial review | RUN | found an SQLite deadlock (fetch under the flush lock inside a txn) in an intermediate version; fixed, regression test hangs on the old code |

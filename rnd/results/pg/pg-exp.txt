@@ -1,0 +1,5 @@
+round=0 files=1000000 gen_s=382 pg_pss_kb=476138 db=599 MB probe=
+round=1 files=2000000 gen_s=436 pg_pss_kb=577280 db=1188 MB probe=
+round=2 files=3000000 gen_s=404 pg_pss_kb=577792 db=1769 MB probe=
+round=3 files=4000000 gen_s=385 pg_pss_kb=589050 db=2337 MB probe=
+== done 08:20:36

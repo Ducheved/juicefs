@@ -1,0 +1,2 @@
+{"label":"pg4M users=100","create_p50_us":1077,"create_p99_us":2357,"stat_p50_us":598,"stat_p99_us":2025}
+{"label":"pg4M users=400","create_p50_us":1080,"create_p99_us":2551,"stat_p50_us":633,"stat_p99_us":2256}

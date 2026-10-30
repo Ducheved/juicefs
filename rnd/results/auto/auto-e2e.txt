@@ -1,0 +1,19 @@
+08:10:50
+access: 25 1793347852 47 1793347852 69 1793347852  hits: 25 1 47 1 69 1 
+keys before: 459 mem: used_memory:2486816
+2026/10/30 08:11:56.847002 juicefs[14657] <WARNING>: AOF is not enabled, you may lose data if Redis is not shutdown properly. [checkRedisInfo@info.go:84]
+{"Units":10,"Cold":0,"Candidates":7,"Evicted":[3,91,113,135,157,179,201],"Skipped":{},"MemoryBefore":0,"MemoryAfter":0,"Pressure":false} took=26.844579401s
+keys after: 169
+{"Root":3,"State":"cold","Epoch":1,"Owner":3,"Object":"meta/capsules/3/1","Sum":"0e9c67ea66d3d5ae4f689fc83039d164206a1a3
+{"Root":91,"State":"cold","Epoch":2,"Owner":3,"Object":"meta/capsules/91/2","Sum":"87f0a510d7e9c8fdbb3ce7ae3ef22912c10a7
+{"Root":113,"State":"cold","Epoch":3,"Owner":3,"Object":"meta/capsules/113/3","Sum":"dfc0a06b97325144470fb98775e8e6c9d8c
+{"Root":135,"State":"cold","Epoch":4,"Owner":3,"Object":"meta/capsules/135/4","Sum":"cbfce7b2811b4bdfd82e98351e0de0fc793
+{"Root":157,"State":"cold","Epoch":5,"Owner":3,"Object":"meta/capsules/157/5","Sum":"0bad18a0f00c4b0ed53be98b98e213d6285
+{"Root":179,"State":"cold","Epoch":6,"Owner":3,"Object":"meta/capsules/179/6","Sum":"bd3482b4669ac72b218ca0edb6f1ce9716f
+{"Root":201,"State":"cold","Epoch":7,"Owner":3,"Object":"meta/capsules/201/7","Sum":"baff7ae15d34d3f611a9fd9ddb6749147ee
+manifest equal after transparent load
+keys after read: 463
+0
+/tmp/claude-0/-home-user/40fd7f72-6e5a-5b1e-910b-f8925f83d035/scratchpad/e2e-auto/a.log:0
+/tmp/claude-0/-home-user/40fd7f72-6e5a-5b1e-910b-f8925f83d035/scratchpad/e2e-auto/b.log:0
+== done 08:12:24
