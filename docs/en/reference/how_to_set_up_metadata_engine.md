@@ -182,6 +182,12 @@ The Active Replication feature is asynchronous and may cause consistency issues,
 
 When being used as the metadata storage engine for JuiceFS, KeyDB functions the same way as Redis. Please refer to KeyDB's [documentation](https://docs.keydb.dev/docs) for installation and other aspects, as well as the [Redis](#redis) section for usage.
 
+### Kvrocks
+
+[Apache Kvrocks](https://kvrocks.apache.org) is a key-value database compatible with the Redis protocol. It keeps data on disk in RocksDB, so its memory usage depends on the block cache size rather than on the number of files.
+
+When being used as the metadata storage engine for JuiceFS, Kvrocks is accessed with a `redis://` URL. By default Kvrocks ignores `SELECT` and all database numbers share one namespace, so JuiceFS refuses a database other than 0 unless `redis-databases` is set in `kvrocks.conf`.
+
 ## Key-value database
 
 ### BadgerDB

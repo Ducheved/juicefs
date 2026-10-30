@@ -303,7 +303,9 @@ func newRedisMeta(driver, addr string, conf *Config) (Meta, error) {
 		}
 	}
 	m.en = m
-	m.checkServerConfig()
+	if err = m.checkServerConfig(opt.DB); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -4745,15 +4747,24 @@ func (m *redisMeta) cleanUgUsage(ctx Context, qtype uint32) error {
 	})
 }
 
-func (m *redisMeta) checkServerConfig() {
+func (m *redisMeta) checkServerConfig(db int) error {
 	rawInfo, err := m.rdb.Info(Background()).Result()
 	if err != nil {
 		logger.Warnf("parse info: %s", err)
-		return
+		return nil
 	}
 	rInfo, err := checkRedisInfo(rawInfo)
 	if err != nil {
 		logger.Warnf("parse info: %s", err)
+	}
+	if _, cluster := m.rdb.(*redis.ClusterClient); rInfo.kvrocksVersion != "" && db != 0 && !cluster {
+		ci, err := m.rdb.Do(Background(), "client", "info").Text()
+		if err != nil {
+			return fmt.Errorf("check database %d on Kvrocks %s: %w", db, rInfo.kvrocksVersion, err)
+		}
+		if n, ok := clientDB(ci); !ok || n != db {
+			return fmt.Errorf("kvrocks %s ignores database %d, set redis-databases in kvrocks.conf or use database 0", rInfo.kvrocksVersion, db)
+		}
 	}
 	if rInfo.storageProvider == "" && rInfo.maxMemoryPolicy != "" && rInfo.maxMemoryPolicy != "noeviction" {
 		logger.Warnf("maxmemory_policy is %q,  we will try to reconfigure it to 'noeviction'.", rInfo.maxMemoryPolicy)
@@ -4771,9 +4782,10 @@ func (m *redisMeta) checkServerConfig() {
 	_, err = m.rdb.Ping(Background()).Result()
 	if err != nil {
 		logger.Errorf("Ping redis: %s", err.Error())
-		return
+		return nil
 	}
 	logger.Infof("Ping redis latency: %s", time.Since(start))
+	return nil
 }
 
 func (m *redisMeta) dumpEntries(es ...*DumpedEntry) error {
@@ -5290,23 +5302,16 @@ func (m *redisMeta) loadEntry(e *DumpedEntry, p redis.Pipeliner, tryExec func(),
 	tryExec()
 }
 
+func (m *redisMeta) checkEmpty(ctx Context) error {
+	return m.scan(ctx, "*", func(keys []string) error {
+		return fmt.Errorf("database redis://%s is not empty", m.addr)
+	})
+}
+
 func (m *redisMeta) LoadMeta(r io.Reader) (err error) {
 	ctx := Background()
-	if _, ok := m.rdb.(*redis.ClusterClient); ok {
-		err = m.scan(ctx, "*", func(keys []string) error {
-			return fmt.Errorf("found key with same prefix: %s", keys[0])
-		})
-		if err != nil {
-			return err
-		}
-	} else {
-		dbsize, err := m.rdb.DBSize(ctx).Result()
-		if err != nil {
-			return err
-		}
-		if dbsize > 0 {
-			return fmt.Errorf("Database redis://%s is not empty", m.addr)
-		}
+	if err = m.checkEmpty(ctx); err != nil {
+		return err
 	}
 
 	p := m.rdb.TxPipeline()

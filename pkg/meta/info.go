@@ -63,6 +63,7 @@ type redisInfo struct {
 	maxMemoryPolicy string
 	redisVersion    string
 	storageProvider string // redis is "", keyDB is "none" or "flash"
+	kvrocksVersion  string
 }
 
 func checkRedisInfo(rawInfo string) (info redisInfo, err error) {
@@ -95,6 +96,8 @@ func checkRedisInfo(rawInfo string) (info redisInfo, err error) {
 					logger.Fatalf("Redis version should not be older than %s", oldestSupportedVer)
 				}
 			}
+		case "kvrocks_version":
+			info.kvrocksVersion = val
 		case "storage_provider":
 			// if storage_provider is none reset it to ""
 			if val == "flash" {
@@ -103,4 +106,14 @@ func checkRedisInfo(rawInfo string) (info redisInfo, err error) {
 		}
 	}
 	return
+}
+
+func clientDB(clientInfo string) (int, bool) {
+	for _, f := range strings.Fields(clientInfo) {
+		if v, ok := strings.CutPrefix(f, "db="); ok {
+			n, err := strconv.Atoi(v)
+			return n, err == nil
+		}
+	}
+	return 0, false
 }

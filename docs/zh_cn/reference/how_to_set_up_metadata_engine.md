@@ -169,6 +169,12 @@ KeyDB 的 Active Replication 功能是异步复制的，可能会导致一致性
 
 在用于 JuiceFS 的元数据存储引擎时，KeyDB 的功能与 Redis 完全相同。请参考 KeyDB 的[文档](https://docs.keydb.dev/docs)进行安装以及了解其他相关内容，同时参考本文档 [Redis](#redis) 章节了解使用方法。
 
+### Kvrocks
+
+[Apache Kvrocks](https://kvrocks.apache.org) 是兼容 Redis 协议的键值数据库，数据存放在磁盘上的 RocksDB 中，内存占用取决于块缓存大小，而不是文件数量。
+
+用作 JuiceFS 元数据引擎时，通过 `redis://` 地址访问 Kvrocks。Kvrocks 默认忽略 `SELECT`，所有数据库编号共用同一个命名空间，因此除非在 `kvrocks.conf` 中设置了 `redis-databases`，JuiceFS 会拒绝使用 0 以外的数据库。
+
 ## 键值数据库
 
 ### BadgerDB

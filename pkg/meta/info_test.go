@@ -243,5 +243,46 @@ func TestParseRedisInfo(t *testing.T) {
 		if info.maxMemoryPolicy != "allkeys-lru" {
 			t.Fatalf("Expect %s, got %s", "allkeys-lru", info.maxMemoryPolicy)
 		}
+		if info.kvrocksVersion != "" {
+			t.Fatalf("Expect no kvrocks version, got %q", info.kvrocksVersion)
+		}
 	})
+	t.Run("Should detect Kvrocks", func(t *testing.T) {
+		input := `# Server
+version:2.17.0
+kvrocks_version:2.17.0
+redis_version:7.0.0
+git_sha1:185d4221
+kvrocks_git_sha1:185d4221
+redis_mode:standalone
+kvrocks_mode:standalone
+os:Linux 6.18.44-fc-v185 x86_64
+clang_version:19.1.7
+rocksdb_version:11.8.1
+arch_bits:64`
+		info, err := checkRedisInfo(input)
+		if err != nil {
+			t.Fatalf("Failed to parse kvrocks info: %s", err)
+		}
+		if info.kvrocksVersion != "2.17.0" || info.redisVersion != "7.0.0" {
+			t.Fatalf("Expect kvrocks 2.17.0 with redis 7.0.0, got %q %q", info.kvrocksVersion, info.redisVersion)
+		}
+	})
+}
+
+func TestClientDB(t *testing.T) {
+	cases := []struct {
+		info string
+		db   int
+		ok   bool
+	}{
+		{"id=37 addr=127.0.0.1:50614 laddr=127.0.0.1:6379 fd=7 name= age=0 idle=0 flags=N db=5 sub=0 psub=0 ssub=0 multi=-1 qbuf=26 qbuf-free=20448 argv-mem=10 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 tot-mem=37658 events=r cmd=client|info user=default redir=-1 resp=2", 5, true},
+		{"id=36 addr=127.0.0.1:43132 fd=11 name= age=0 idle=0 flags=N db=5 qbuf=0 obuf=0 cmd=client lib-name= lib-ver=", 5, true},
+		{"id=1 addr=127.0.0.1:41680 fd=50 name= age=0 idle=0 flags=N namespace=__namespace qbuf=0 obuf=0 cmd=client lib-name= lib-ver=", 0, false},
+	}
+	for _, c := range cases {
+		if db, ok := clientDB(c.info); db != c.db || ok != c.ok {
+			t.Fatalf("clientDB(%q) = %d %t, want %d %t", c.info, db, ok, c.db, c.ok)
+		}
+	}
 }

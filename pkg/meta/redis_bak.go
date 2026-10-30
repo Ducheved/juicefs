@@ -987,21 +987,5 @@ func (m *redisMeta) loadParents(ctx Context, msg proto.Message) error {
 
 func (m *redisMeta) prepareLoad(ctx Context, opt *LoadOption) error {
 	opt.check()
-	if _, ok := m.rdb.(*redis.ClusterClient); ok {
-		err := m.scan(ctx, "*", func(keys []string) error {
-			return fmt.Errorf("found key with same prefix: %s", keys[0])
-		})
-		if err != nil {
-			return err
-		}
-	} else {
-		dbsize, err := m.rdb.DBSize(ctx).Result()
-		if err != nil {
-			return err
-		}
-		if dbsize > 0 {
-			return fmt.Errorf("database redis://%s is not empty", m.addr)
-		}
-	}
-	return nil
+	return m.checkEmpty(ctx)
 }
