@@ -1,0 +1,17 @@
+metad creategap data=/srv/stand/stand/metad-growth pairs=2 pid=109545
+unlink=true gap=none create_p50_us=701 p99_us=1354
+unlink=true gap=lookup create_p50_us=1073 p99_us=1373
+unlink=true gap=getattr create_p50_us=1072 p99_us=1352
+unlink=true gap=sleep create_p50_us=686 p99_us=954
+unlink=false gap=none create_p50_us=682 p99_us=934
+unlink=false gap=lookup create_p50_us=647 p99_us=905
+unlink=false gap=getattr create_p50_us=663 p99_us=908
+unlink=false gap=sleep create_p50_us=763 p99_us=1094
+unlink=true gap=none create_p50_us=706 p99_us=1347
+unlink=true gap=lookup create_p50_us=1076 p99_us=1311
+unlink=true gap=getattr create_p50_us=1104 p99_us=1367
+unlink=true gap=sleep create_p50_us=680 p99_us=951
+unlink=false gap=none create_p50_us=676 p99_us=933
+unlink=false gap=lookup create_p50_us=650 p99_us=900
+unlink=false gap=getattr create_p50_us=661 p99_us=949
+unlink=false gap=sleep create_p50_us=760 p99_us=1042

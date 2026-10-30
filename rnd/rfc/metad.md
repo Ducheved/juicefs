@@ -1,6 +1,6 @@
 # metad: durable, highly available metadata service in ≤ 2 GiB per replica
 
-Status: draft, 2026-10-30. P0 and P1 done. Evidence labels as in `LEDGER.md`.
+Status: draft, 2026-10-30. P0, P1 and server-side lookup done. Evidence labels as in `LEDGER.md`.
 
 ## Constraints
 
@@ -91,7 +91,8 @@ P1, single-node `metad` with the JuiceFS client over the network, same VM and ca
 - JuiceFS shared meta test suite passes on `metad://`.
 - Write ceiling 1 726 → 6 133 create/unlink cycles/s (Valkey 660 → 3 723, Kvrocks ≈ 550, PostgreSQL ≈ 1 200).
 - Growth to 4 M: 4.5× faster generation than Valkey, create p50 370 µs (Valkey 815), stat p50 ≈ 380 µs (Valkey ≈ 210), server CPU per probe op ≈ 600 µs (Valkey ≈ 350); memory bounded by the cache, 0 OOM.
-- Next for reads: a server-side lookup (entry and attribute in one round trip) to bring stat from 7 to 4 round trips.
+- Server-side lookup (entry and attribute in one round trip, `b7108445`): stat p50 ≈ 230–250 µs (Valkey ≈ 210), server CPU per probe op ≈ 500–530 µs (RUN, `LEDGER.md` "metad server-side lookup").
+- A commit that arrives during the previous batch's fsync waits for it; pipelined commits are part of P2.
 
 Not yet measured: replication (P2), 39 M through the server, many client processes.
 
@@ -104,7 +105,7 @@ Not yet measured: replication (P2), 39 M through the server, many client process
 | P2 | Raft, three replicas, batching | kill -9 of leader and followers: no acknowledged write lost (linearizability check with porcupine), failover time measured |
 | P3 | 39 M files + 1 000 simulated clients, scoped quota refresh | engine CPU per op flat in client count; RAM at cap |
 | P4 | migration from Redis-protocol engine via dump/load, shadow run | owner decision |
-| Later | blind adds in `kvTxn`, server-side lookup, subtree leases | each measured separately |
+| Later | blind adds in `kvTxn`, subtree leases | each measured separately |
 
 ## Risks
 

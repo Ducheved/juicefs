@@ -1,0 +1,14 @@
+metad mem=2G cache_mb=768 engine_cpus=0-1 load_cpus=2-3 pid=107119
+round=0 files=1000000 gen_s=123 gen_server_cpu_s=141 dir_bytes=356908512 b_per_file=356 cg_now_mb=792 cg_peak_mb=821 rss_mb=513 anon_mb=440 file_mb=340 oom_kills=0
+r0-hot10k {"create_p50_us":463,"create_p99_us":565,"label":"r0-hot10k","stat_p50_us":223,"stat_p99_us":279} server_cpu_us_per_op=512
+r0-all {"create_p50_us":443,"create_p99_us":518,"label":"r0-all","stat_p50_us":241,"stat_p99_us":334} server_cpu_us_per_op=496
+round=1 files=2000000 gen_s=103 gen_server_cpu_s=141 dir_bytes=449062255 b_per_file=224 cg_now_mb=956 cg_peak_mb=999 rss_mb=587 anon_mb=513 file_mb=428 oom_kills=0
+r1-hot10k {"create_p50_us":451,"create_p99_us":529,"label":"r1-hot10k","stat_p50_us":232,"stat_p99_us":297} server_cpu_us_per_op=496
+r1-all {"create_p50_us":445,"create_p99_us":524,"label":"r1-all","stat_p50_us":253,"stat_p99_us":459} server_cpu_us_per_op=527
+round=2 files=3000000 gen_s=104 gen_server_cpu_s=143 dir_bytes=533549008 b_per_file=177 cg_now_mb=1201 cg_peak_mb=1225 rss_mb=749 anon_mb=675 file_mb=508 oom_kills=0
+r2-hot10k {"create_p50_us":443,"create_p99_us":533,"label":"r2-hot10k","stat_p50_us":229,"stat_p99_us":331} server_cpu_us_per_op=513
+r2-all {"create_p50_us":439,"create_p99_us":537,"label":"r2-all","stat_p50_us":247,"stat_p99_us":320} server_cpu_us_per_op=529
+round=3 files=4000000 gen_s=104 gen_server_cpu_s=144 dir_bytes=617533113 b_per_file=154 cg_now_mb=1305 cg_peak_mb=1329 rss_mb=770 anon_mb=696 file_mb=589 oom_kills=0
+r3-hot10k {"create_p50_us":455,"create_p99_us":559,"label":"r3-hot10k","stat_p50_us":204,"stat_p99_us":284} server_cpu_us_per_op=499
+r3-all {"create_p50_us":437,"create_p99_us":530,"label":"r3-all","stat_p50_us":254,"stat_p99_us":361} server_cpu_us_per_op=534
+== done 20:47:06 oom_kills=0

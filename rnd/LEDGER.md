@@ -336,3 +336,15 @@ Server: `juicefs metad`, Pebble v2.1.7, snapshot reads per transaction, optimist
 | Against Valkey on the same test | RUN | write ceiling 1.6–3.2× Valkey at every writer count; create p50 2.2× faster (370 vs 815 µs); stat p50 1.8× slower (≈ 380 vs 208–221 µs) and server CPU per probe op 1.7× higher (≈ 600 vs 347–357 µs) |
 | Why stat costs more | SOURCE | probe stat = 3 `Lookup` + `GetAttr`; TKV `doLookup` is two gets (entry, then inode) = 2 round trips each → 7 round trips per stat; Redis `Lookup` is one EVALSHA → 4 commands per stat |
 | Not measured | NOTE | replication (P2), 39 M through the server, thousands of client processes, mixed read/write load, failure behaviour |
+
+## metad server-side lookup (`feat/metad` b7108445, `results/vm/metad-growth-lookup*`, `metad-ab*`, `metad-creategap.txt`)
+
+New `OpLookup`: the server reads the dentry, derives the attribute key from the inode in it and returns both from one snapshot. `kvMeta.doLookup` uses it when the driver offers it (`kvTxn.lookup`); other TKV drivers keep two gets. `TestMetadLookup` checks the joined path through the prefix client, including the transaction's own buffered writes; `testMeta`, `testTKV`, mem and Badger suites pass.
+
+| Item | Label | Value |
+|---|---|---|
+| Growth to 4 M, same script and caps as P1 | RUN | stat p50 hot / all 204–232 / 241–254 µs, p99 ≤ 459 µs (P1 371–377 / 383–404); server CPU per probe op 496–534 µs (P1 578–634); gen 103–123 s per 1 M; cgroup 1 305 MB at 4 M, anon 696 MB; 0 OOM |
+| Interleaved A/B, one server on the 4 M data, P1 client (15823bd5) vs lookup client, 3 pairs | RUN | stat p50 372–411 → 227–261 µs; server CPU per probe op 667–736 → 577–625 µs; create p50 830–902 → 998–1 015 µs (absolute create is higher than in the growth run: freshly reopened server) |
+| Stat against Valkey | RUN | ≈ 230–250 µs vs Valkey 208–221 µs: gap down from 1.8× to ≈ 1.1× |
+| Why create looked slower | RUN + SOURCE | `Unlink` of a closed file starts `doDeleteFileData` in a goroutine (`base.go:3052`): a scan and one more synced commit. A create that reaches the server while that fsync runs waits for it. `rnd/creategap` (one dir, n = 2000): with unlink, create p50 ≈ 700 µs after nothing or a 300 µs sleep, ≈ 1 075–1 105 µs right after a lookup or getattr, for the P1 and the new client alike; without unlink the read before create costs nothing (647–663 vs 676–682 µs). The faster resolve in the probe moves its create into that window; the create path itself did not change |
+| Follow-up | INFERENCE | the server commits one batch at a time (write, fsync, reply, then the next batch), so a commit that arrives during an fsync pays up to two. Pipelining (write batch N+1 while N syncs) is the fix; it belongs to the Raft log path in P2 |

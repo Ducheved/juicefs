@@ -1,0 +1,14 @@
+metad ab data=/srv/stand/stand/metad-growth mem=2G clients=probe3-p1 probe3 pairs=3 pid=107826
+probe3-p1-u1-1 {"create_p50_us":902,"create_p99_us":1089,"label":"probe3-p1-u1-1","stat_p50_us":372,"stat_p99_us":747} server_cpu_us_per_op=736
+probe3-p1-u400-1 {"create_p50_us":830,"create_p99_us":1010,"label":"probe3-p1-u400-1","stat_p50_us":411,"stat_p99_us":535} server_cpu_us_per_op=725
+probe3-u1-1 {"create_p50_us":998,"create_p99_us":1133,"label":"probe3-u1-1","stat_p50_us":237,"stat_p99_us":344} server_cpu_us_per_op=583
+probe3-u400-1 {"create_p50_us":1015,"create_p99_us":1204,"label":"probe3-u400-1","stat_p50_us":261,"stat_p99_us":349} server_cpu_us_per_op=608
+probe3-p1-u1-2 {"create_p50_us":875,"create_p99_us":1039,"label":"probe3-p1-u1-2","stat_p50_us":382,"stat_p99_us":453} server_cpu_us_per_op=667
+probe3-p1-u400-2 {"create_p50_us":849,"create_p99_us":1027,"label":"probe3-p1-u400-2","stat_p50_us":400,"stat_p99_us":515} server_cpu_us_per_op=706
+probe3-u1-2 {"create_p50_us":1005,"create_p99_us":1206,"label":"probe3-u1-2","stat_p50_us":232,"stat_p99_us":320} server_cpu_us_per_op=593
+probe3-u400-2 {"create_p50_us":1008,"create_p99_us":1172,"label":"probe3-u400-2","stat_p50_us":256,"stat_p99_us":336} server_cpu_us_per_op=625
+probe3-p1-u1-3 {"create_p50_us":888,"create_p99_us":1049,"label":"probe3-p1-u1-3","stat_p50_us":378,"stat_p99_us":487} server_cpu_us_per_op=670
+probe3-p1-u400-3 {"create_p50_us":872,"create_p99_us":1044,"label":"probe3-p1-u400-3","stat_p50_us":388,"stat_p99_us":468} server_cpu_us_per_op=695
+probe3-u1-3 {"create_p50_us":1007,"create_p99_us":1176,"label":"probe3-u1-3","stat_p50_us":227,"stat_p99_us":285} server_cpu_us_per_op=577
+probe3-u400-3 {"create_p50_us":1007,"create_p99_us":1193,"label":"probe3-u400-3","stat_p50_us":249,"stat_p99_us":335} server_cpu_us_per_op=604
+== done 20:49:57 oom_kills=0
