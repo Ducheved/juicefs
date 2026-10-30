@@ -118,7 +118,7 @@ func main() {
 			var local []time.Duration
 			for i := 0; time.Now().Before(deadline); i++ {
 				dir := dirIno[rng.Intn(*users)][rng.Intn(*dirs)]
-				name := fmt.Sprintf("mix-%d-%d", w, i)
+				name := fmt.Sprintf("mix-%d-%d-%d", os.Getpid(), w, i)
 				var ino meta.Ino
 				var attr meta.Attr
 				t := time.Now()
