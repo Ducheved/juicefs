@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -129,6 +130,7 @@ type capsuleEngine interface {
 	doListCapsules(ctx Context) ([]*CapsuleInfo, error)
 	doLoadCapsuleSet(ctx Context, ver int64) (*capsuleSet, error)
 	doScanCapsuleSlices(ctx Context, store object.ObjectStorage, info *CapsuleInfo, fn func(Ino, Slice) error) error
+	doCheckEvicting(ctx Context) error
 }
 
 func (m *baseMeta) capsuleEngine() (capsuleEngine, error) {
@@ -161,8 +163,16 @@ func (m *baseMeta) refreshCapsules(ctx Context) {
 	}
 }
 
+func (m *baseMeta) capsuleSet(ctx Context) *capsuleSet {
+	if s := m.capsules.Load(); s != nil {
+		return s
+	}
+	m.refreshCapsules(ctx)
+	return m.capsules.Load()
+}
+
 func (m *baseMeta) hasCapsules() bool {
-	s := m.capsules.Load()
+	s := m.capsuleSet(Background())
 	return s != nil && len(s.roots) > 0
 }
 
@@ -182,7 +192,7 @@ func (m *baseMeta) checkNoCapsules(ctx Context) error {
 }
 
 func (m *baseMeta) coldSummary(ino Ino) (*Summary, bool) {
-	s := m.capsules.Load()
+	s := m.capsuleSet(Background())
 	if s == nil {
 		return nil, false
 	}
@@ -193,7 +203,7 @@ func (m *baseMeta) coldSummary(ino Ino) (*Summary, bool) {
 }
 
 func (m *baseMeta) ensureHot(ctx Context, ino Ino, entries bool) syscall.Errno {
-	s := m.capsules.Load()
+	s := m.capsuleSet(ctx)
 	if s == nil || len(s.roots) == 0 {
 		return 0
 	}
@@ -227,8 +237,13 @@ func (m *baseMeta) hydrateUnit(ctx Context, root Ino) syscall.Errno {
 		logger.Errorf("Inode %d is evicted and this client has no object storage to load it", root)
 		return syscall.EIO
 	}
-	m.capsuleMu.Lock()
-	defer m.capsuleMu.Unlock()
+	if m.conf.ReadOnly || m.sid == 0 {
+		logger.Errorf("Inode %d is evicted and a read-only or session-less client cannot load it", root)
+		return syscall.EIO
+	}
+	lock, _ := m.capsuleLocks.LoadOrStore(root, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
 	deadline := time.Now().Add(time.Minute)
 	for {
 		start := time.Now()
@@ -274,6 +289,9 @@ func (m *baseMeta) scanCapsuleSlices(ctx Context, fn func(Ino, Slice) error) err
 		return fmt.Errorf("%d directories are evicted and no object storage is set to read their slices", len(infos))
 	}
 	for _, info := range infos {
+		if info.State == CapsuleCooling {
+			continue
+		}
 		if err = c.doScanCapsuleSlices(ctx, m.capsuleStore, info, fn); err != nil {
 			return fmt.Errorf("scan capsule of inode %d: %w", info.Root, err)
 		}

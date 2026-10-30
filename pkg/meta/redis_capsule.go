@@ -15,7 +15,47 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const capsuleBatch = 500
+const (
+	capsuleBatch       = 500
+	capsuleBatchValues = 20000
+)
+
+type capsuleRestoreOp struct {
+	rec   *capsuleRecord
+	vals  [][]byte
+	first bool
+}
+
+func capsuleRestoreBatches(recs []capsuleRecord, limit int) [][]capsuleRestoreOp {
+	var batches [][]capsuleRestoreOp
+	var cur []capsuleRestoreOp
+	size := 0
+	flush := func() {
+		if len(cur) > 0 {
+			batches = append(batches, cur)
+			cur, size = nil, 0
+		}
+	}
+	for i := range recs {
+		r := &recs[i]
+		step := len(r.vals)
+		if r.kind == capsuleRecHash {
+			step = limit &^ 1
+		} else if r.kind == capsuleRecList {
+			step = limit
+		}
+		for off := 0; off < len(r.vals); off += step {
+			vals := r.vals[off:min(off+step, len(r.vals))]
+			if size+len(vals) > limit {
+				flush()
+			}
+			cur = append(cur, capsuleRestoreOp{rec: r, vals: vals, first: off == 0})
+			size += len(vals)
+		}
+	}
+	flush()
+	return batches
+}
 
 var _ capsuleEngine = (*redisMeta)(nil)
 
@@ -303,14 +343,79 @@ func (m *redisMeta) snapshotUnit(ctx Context, root Ino, maxInodes int64) (*capsu
 	return snap, nil
 }
 
+func (m *redisMeta) evictingKey() string {
+	return m.prefix + "capsuleEvicting"
+}
+
+func (m *redisMeta) doCheckEvicting(ctx Context) error {
+	owner, err := m.rdb.Get(ctx, m.evictingKey()).Uint64()
+	if err == redis.Nil {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if owner != m.sid && m.sessionAlive(ctx, owner) {
+		return fmt.Errorf("metadata eviction is running in session %d: %w", owner, syscall.EBUSY)
+	}
+	return nil
+}
+
+func (m *redisMeta) lockEviction(ctx Context) error {
+	return m.txn(ctx, func(tx *redis.Tx) error {
+		owner, err := tx.Get(ctx, m.evictingKey()).Uint64()
+		if err != nil && err != redis.Nil {
+			return err
+		}
+		if err == nil && owner != m.sid && m.sessionAlive(ctx, owner) {
+			return fmt.Errorf("metadata eviction is running in session %d: %w", owner, syscall.EBUSY)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, m.evictingKey(), m.sid, 0)
+			return nil
+		})
+		return err
+	}, m.evictingKey())
+}
+
+func (m *redisMeta) unlockEviction(ctx Context) {
+	_ = m.txn(ctx, func(tx *redis.Tx) error {
+		if owner, err := tx.Get(ctx, m.evictingKey()).Uint64(); err != nil || owner != m.sid {
+			return err
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, m.evictingKey())
+			return nil
+		})
+		return err
+	}, m.evictingKey())
+}
+
+func (m *redisMeta) onlySession(ctx context.Context, c redis.Cmdable) error {
+	if n, err := c.ZCard(ctx, m.allSessions()).Result(); err != nil {
+		return err
+	} else if n != 1 {
+		return fmt.Errorf("%d sessions are alive, stop all other clients first: %w", n, syscall.EBUSY)
+	}
+	return nil
+}
+
 func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectStorage, maxInodes int64) (*CapsuleInfo, error) {
 	if m.sid == 0 {
 		return nil, fmt.Errorf("a session is required to evict metadata")
 	}
-	if n, err := m.rdb.ZCard(ctx, m.allSessions()).Result(); err != nil {
+	if err := m.lockEviction(ctx); err != nil {
 		return nil, err
-	} else if n != 1 {
-		return nil, fmt.Errorf("%d sessions are alive, stop all other clients first: %w", n, syscall.EBUSY)
+	}
+	defer m.unlockEviction(ctx)
+	if err := m.onlySession(ctx, m.rdb); err != nil {
+		return nil, err
+	}
+	cur, err := m.getCapsule(ctx, m.rdb, root)
+	if err != nil {
+		return nil, err
+	}
+	if cur != nil && cur.State == CapsuleCold {
+		return cur, m.resumeDrop(ctx, store, cur)
 	}
 	var attr Attr
 	if st := m.doGetAttr(ctx, root, &attr); st != 0 {
@@ -318,9 +423,6 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 	}
 	if attr.Typ != TypeDirectory {
 		return nil, syscall.ENOTDIR
-	}
-	if err := m.enableCapsules(ctx); err != nil {
-		return nil, err
 	}
 	e, err := m.incrCounter("nextCapsuleEpoch", 1)
 	if err != nil {
@@ -338,13 +440,20 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 	if err != nil {
 		return nil, err
 	}
+	obj := capsuleObject(root, epoch)
+	uploaded := false
 	abort := func(cause error) (*CapsuleInfo, error) {
-		_ = m.capsuleTxn(ctx, root, func(info *CapsuleInfo) error {
+		err := m.capsuleTxn(ctx, root, func(info *CapsuleInfo) error {
 			if info == nil || info.State != CapsuleCooling || info.Epoch != epoch {
 				return syscall.ESTALE
 			}
 			return nil
 		}, func(pipe redis.Pipeliner) { pipe.Del(ctx, m.capsuleKey(root)) })
+		if err == nil && uploaded {
+			if err = store.Delete(ctx, obj); err != nil {
+				logger.Warnf("Delete capsule %s: %s", obj, err)
+			}
+		}
 		return nil, cause
 	}
 	snap, err := m.snapshotUnit(ctx, root, maxInodes)
@@ -352,27 +461,39 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		return abort(err)
 	}
 	data, sum := encodeCapsule(root, epoch, snap.recs)
-	obj := capsuleObject(root, epoch)
+	uploaded = true
 	if err = store.Put(ctx, obj, bytes.NewReader(data)); err != nil {
 		return abort(fmt.Errorf("upload capsule: %w", err))
 	}
 	if err = m.verifyCapsule(ctx, store, obj, root, epoch, sum); err != nil {
 		return abort(err)
 	}
+	if err = m.enableCapsules(ctx); err != nil {
+		return abort(err)
+	}
 	info := &CapsuleInfo{Root: root, State: CapsuleCold, Epoch: epoch, Owner: m.sid, Object: obj, Sum: sum, Size: int64(len(data)),
 		Records: int64(len(snap.recs)), Inodes: snap.inodes, Keys: int64(len(snap.keys)), Runs: int64(len(snap.runs)), Summary: snap.summary, runs: snap.runs}
-	err = m.capsuleTxn(ctx, root, func(cur *CapsuleInfo) error {
+	err = m.txn(ctx, func(tx *redis.Tx) error {
+		cur, err := m.getCapsule(ctx, tx, root)
+		if err != nil {
+			return err
+		}
 		if cur == nil || cur.State != CapsuleCooling || cur.Epoch != epoch {
 			return fmt.Errorf("capsule of inode %d changed during eviction: %w", root, syscall.ESTALE)
 		}
-		return nil
-	}, func(pipe redis.Pipeliner) {
-		pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCold, "object", obj, "sum", sum, "size", info.Size,
-			"records", info.Records, "inodes", info.Inodes, "keys", info.Keys, "runs", encodeRuns(snap.runs),
-			"files", snap.summary.Files, "dirs", snap.summary.Dirs, "space", snap.summary.Size, "length", snap.summary.Length)
-		pipe.HSet(ctx, m.capsulesKey(), root.String(), epoch)
-		pipe.Incr(ctx, m.capsuleVerKey())
-	})
+		if err = m.onlySession(ctx, tx); err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, m.capsuleKey(root), "state", CapsuleCold, "object", obj, "sum", sum, "size", info.Size,
+				"records", info.Records, "inodes", info.Inodes, "keys", info.Keys, "runs", encodeRuns(snap.runs),
+				"files", snap.summary.Files, "dirs", snap.summary.Dirs, "space", snap.summary.Size, "length", snap.summary.Length)
+			pipe.HSet(ctx, m.capsulesKey(), root.String(), epoch)
+			pipe.Incr(ctx, m.capsuleVerKey())
+			return nil
+		})
+		return err
+	}, m.capsuleKey(root), m.allSessions())
 	if err != nil {
 		return abort(err)
 	}
@@ -380,6 +501,31 @@ func (m *redisMeta) doEvictCapsule(ctx Context, root Ino, store object.ObjectSto
 		return info, fmt.Errorf("capsule committed, cleanup of hot keys failed, run evict again: %w", err)
 	}
 	return info, nil
+}
+
+func (m *redisMeta) resumeDrop(ctx Context, store object.ObjectStorage, info *CapsuleInfo) error {
+	data, err := m.readCapsule(ctx, store, info.Object)
+	if err != nil {
+		return err
+	}
+	recs, err := decodeCapsule(data, info.Root, capsuleObjectEpoch(info.Object), info.Sum)
+	if err != nil {
+		return err
+	}
+	snap := &capsuleSnapshot{fields: make(map[string][]string)}
+	for _, r := range recs {
+		if r.kind == capsuleRecField {
+			snap.fields[m.prefix+r.key] = append(snap.fields[m.prefix+r.key], string(r.vals[0]))
+		} else {
+			snap.keys = append(snap.keys, m.prefix+r.key)
+		}
+	}
+	return m.dropUnitKeys(ctx, info.Root, info.Epoch, snap)
+}
+
+func capsuleObjectEpoch(obj string) uint64 {
+	v, _ := strconv.ParseUint(obj[strings.LastIndex(obj, "/")+1:], 10, 64)
+	return v
 }
 
 func (m *redisMeta) dropUnitKeys(ctx Context, root Ino, epoch uint64, snap *capsuleSnapshot) error {
@@ -493,30 +639,29 @@ func (m *redisMeta) doHydrateCapsule(ctx Context, root Ino, store object.ObjectS
 		}
 		return nil
 	}
-	for i := 0; i < len(recs); i += capsuleBatch {
-		batch := recs[i:min(i+capsuleBatch, len(recs))]
+	for _, batch := range capsuleRestoreBatches(recs, capsuleBatchValues) {
 		err = m.capsuleTxn(ctx, root, check, func(pipe redis.Pipeliner) {
-			for _, r := range batch {
-				key := m.prefix + r.key
-				switch r.kind {
+			for _, op := range batch {
+				key := m.prefix + op.rec.key
+				args := make([]interface{}, len(op.vals))
+				for j, v := range op.vals {
+					args[j] = v
+				}
+				switch op.rec.kind {
 				case capsuleRecString:
-					pipe.Set(ctx, key, r.vals[0], 0)
+					pipe.Set(ctx, key, op.vals[0], 0)
 				case capsuleRecHash:
-					pipe.Del(ctx, key)
-					args := make([]interface{}, len(r.vals))
-					for j, v := range r.vals {
-						args[j] = v
+					if op.first {
+						pipe.Del(ctx, key)
 					}
 					pipe.HSet(ctx, key, args...)
 				case capsuleRecList:
-					pipe.Del(ctx, key)
-					args := make([]interface{}, len(r.vals))
-					for j, v := range r.vals {
-						args[j] = v
+					if op.first {
+						pipe.Del(ctx, key)
 					}
 					pipe.RPush(ctx, key, args...)
 				case capsuleRecField:
-					pipe.HSet(ctx, key, r.vals[0], r.vals[1])
+					pipe.HSet(ctx, key, op.vals[0], op.vals[1])
 				}
 			}
 		})

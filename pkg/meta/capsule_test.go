@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -326,8 +327,8 @@ func TestRedisCapsuleRejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evict: %s", err)
 	}
-	if _, err = m.EvictMetadata(ctx, proj, store, 0); !errors.Is(err, syscall.EEXIST) {
-		t.Fatalf("evict twice: %v", err)
+	if again, err := m.EvictMetadata(ctx, proj, store, 0); err != nil || again.State != CapsuleCold || again.Epoch != info.Epoch {
+		t.Fatalf("evict twice: %+v %v", again, err)
 	}
 	if err = m.dropUnitKeys(ctx, proj, info.Epoch-1, &capsuleSnapshot{keys: []string{m.inodeKey(other)}}); !errors.Is(err, syscall.ESTALE) {
 		t.Fatalf("stale epoch: %v", err)
@@ -539,4 +540,161 @@ func TestRedisCapsuleCrashRecovery(t *testing.T) {
 	if _, err = m.HydrateMetadata(ctx, proj, store, false); !errors.Is(err, syscall.ENOENT) {
 		t.Fatalf("repeat hydrate after success: %v", err)
 	}
+}
+
+type hookStore struct {
+	object.ObjectStorage
+	onPut func()
+}
+
+func (s *hookStore) Put(ctx context.Context, key string, in io.Reader, getters ...object.AttrGetter) error {
+	if s.onPut != nil {
+		s.onPut()
+	}
+	return s.ObjectStorage.Put(ctx, key, in, getters...)
+}
+
+func TestRedisCapsuleConcurrency(t *testing.T) {
+	m, store, addr := capsuleTestMeta(t)
+	ctx := Background()
+	bctx := context.Background()
+	proj, _ := capsuleTree(t, m)
+	before := capsuleRawDump(t, m)
+	client := func(session bool) *redisMeta {
+		c, err := newRedisMeta("redis", addr, testConfig())
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		if _, err = c.Load(true); err != nil {
+			t.Fatalf("load: %s", err)
+		}
+		c.SetCapsuleStorage(store)
+		if session {
+			if err = c.NewSession(true); err != nil {
+				t.Fatalf("new session: %s", err)
+			}
+		}
+		return c.(*redisMeta)
+	}
+
+	hook := &hookStore{ObjectStorage: store}
+	var lateErr error
+	hook.onPut = func() {
+		late := client(false)
+		lateErr = late.NewSession(true)
+		m.rdb.ZAdd(bctx, m.allSessions(), redis.Z{Score: float64(time.Now().Add(time.Minute).Unix()), Member: "424242"})
+	}
+	if _, err := m.EvictMetadata(ctx, proj, hook, 0); !errors.Is(err, syscall.EBUSY) {
+		t.Fatalf("eviction with a session that appeared before commit: %v", err)
+	}
+	if !errors.Is(lateErr, syscall.EBUSY) {
+		t.Fatalf("mount during eviction: %v", lateErr)
+	}
+	m.rdb.ZRem(bctx, m.allSessions(), "424242")
+	if infos, _ := m.ListCapsules(ctx); len(infos) != 0 {
+		t.Fatalf("aborted eviction left capsules: %v", infos)
+	}
+	if objs, err := osListAll(store); err != nil || len(objs) != 0 {
+		t.Fatalf("aborted eviction left objects: %v %v", objs, err)
+	}
+	if got := capsuleRawDump(t, m); len(got) != len(before) {
+		t.Fatalf("aborted eviction changed keys: %d != %d", len(got), len(before))
+	}
+
+	info, err := m.EvictMetadata(ctx, proj, store, 0)
+	if err != nil {
+		t.Fatalf("evict: %s", err)
+	}
+	data, _ := m.readCapsule(bctx, store, info.Object)
+	recs, _ := decodeCapsule(data, proj, info.Epoch, info.Sum)
+	var restored []string
+	for _, r := range recs {
+		if r.kind == capsuleRecString && strings.HasPrefix(r.key, "i") || r.kind == capsuleRecList {
+			if r.kind == capsuleRecString {
+				m.rdb.Set(bctx, m.prefix+r.key, r.vals[0], 0)
+			} else {
+				for _, v := range r.vals {
+					m.rdb.RPush(bctx, m.prefix+r.key, v)
+				}
+			}
+			restored = append(restored, m.prefix+r.key)
+		}
+	}
+	m.cleanupLeakedInodes(true)
+	m.cleanupLeakedChunks(true)
+	if n, _ := m.rdb.Exists(bctx, restored...).Result(); int(n) != len(restored) {
+		t.Fatalf("leak cleanup removed keys of an evicted unit: %d of %d left", n, len(restored))
+	}
+	if _, err = m.EvictMetadata(ctx, proj, store, 0); err != nil {
+		t.Fatalf("resume eviction: %s", err)
+	}
+	if n, _ := m.rdb.Exists(bctx, restored...).Result(); n != 0 {
+		t.Fatalf("resumed eviction left %d keys", n)
+	}
+	_ = m.CloseSession()
+
+	tool := client(false)
+	var a Ino
+	var attr Attr
+	if st := tool.Lookup(ctx, proj, "a", &a, &attr, false); st != syscall.EIO {
+		t.Fatalf("session-less lookup in a cold root: %s", st)
+	}
+	var entries []*Entry
+	if st := tool.Readdir(ctx, proj, 0, &entries); st != syscall.EIO {
+		t.Fatalf("session-less readdir of a cold root: %s", st)
+	}
+	var sum Summary
+	if st := tool.GetSummary(ctx, proj, &sum, true, true); st != 0 || sum.Files == 0 {
+		t.Fatalf("session-less summary of a cold root: %s %+v", st, sum)
+	}
+
+	c := client(true)
+	defer c.CloseSession()
+	want := make(map[string]bool)
+	for _, r := range recs {
+		if r.kind == capsuleRecList {
+			ino, _ := strconv.ParseUint(strings.Split(r.key[1:], "_")[0], 10, 64)
+			vals := make([]string, len(r.vals))
+			for i, v := range r.vals {
+				vals[i] = string(v)
+			}
+			for _, sl := range readSlices(vals) {
+				want[fmt.Sprintf("%d:%d", ino, sl.id)] = true
+			}
+		}
+	}
+	got := make(map[string]bool)
+	hydrated := false
+	st := c.ScanSlices(ctx, &ScanSlicesOption{}, func(ino Ino, s Slice) error {
+		if !hydrated {
+			hydrated = true
+			if _, err := c.HydrateMetadata(ctx, proj, store, false); err != nil {
+				t.Errorf("hydrate during scan: %s", err)
+			}
+		}
+		got[fmt.Sprintf("%d:%d", ino, s.Id)] = true
+		return nil
+	})
+	if st != 0 {
+		t.Fatalf("scan slices: %s", st)
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("slice %s missed while a unit was hydrated during the scan", k)
+		}
+	}
+}
+
+func osListAll(store object.ObjectStorage) ([]string, error) {
+	var keys []string
+	objs, err := object.ListAll(context.Background(), store, "meta/", "", true, false)
+	if err != nil {
+		return nil, err
+	}
+	for o := range objs {
+		if o != nil && !o.IsDir() {
+			keys = append(keys, o.Key())
+		}
+	}
+	return keys, nil
 }

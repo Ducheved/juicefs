@@ -267,6 +267,7 @@ func initForSvc(c *cli.Context, mp string, svcType, metaUrl, listenAddr string) 
 		logger.Fatalf("object storage: %s", err)
 	}
 	logger.Infof("Data use %s", blob)
+	metaCli.SetCapsuleStorage(blob)
 
 	chunkConf := getChunkConf(c, format)
 	store := chunk.NewCachedStore(blob, *chunkConf, registerer)

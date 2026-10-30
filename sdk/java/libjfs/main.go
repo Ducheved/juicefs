@@ -675,6 +675,7 @@ func jfs_init(credentialPtr uintptr, count int32, cname, cjsonConf, cuser, group
 			return nil
 		}
 		logger.Infof("Data use %s", blob)
+		m.SetCapsuleStorage(blob)
 
 		var freeSpaceRatio = 0.1
 		if jConf.FreeSpace != "" {

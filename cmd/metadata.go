@@ -71,10 +71,15 @@ func openMetadata(ctx *cli.Context, args int) (meta.Meta, object.ObjectStorage) 
 }
 
 func resolveDir(m meta.Meta, path string) meta.Ino {
-	var ino meta.Ino
+	ino := meta.RootInode
 	var attr meta.Attr
-	if st := m.Resolve(meta.Background(), meta.RootInode, path, &ino, &attr, false); st != 0 {
-		logger.Fatalf("resolve %s: %s", path, st)
+	for _, name := range strings.Split(path, "/") {
+		if name == "" {
+			continue
+		}
+		if st := m.Lookup(meta.Background(), ino, name, &ino, &attr, false); st != 0 {
+			logger.Fatalf("resolve %s: %s", path, st)
+		}
 	}
 	return ino
 }

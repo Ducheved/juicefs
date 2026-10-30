@@ -3596,6 +3596,11 @@ func (m *redisMeta) cleanupZeroRef(key string) {
 func (m *redisMeta) cleanupLeakedChunks(delete bool) {
 	var ctx = Background()
 	prefix := len(m.prefix)
+	cold, err := m.doLoadCapsuleSet(ctx, -1)
+	if err != nil {
+		logger.Errorf("Load evicted metadata, skip cleanup of leaked chunks: %s", err)
+		return
+	}
 	_ = m.scan(ctx, "c*", func(ckeys []string) error {
 		var ikeys []string
 		var rs []*redis.IntCmd
@@ -3606,6 +3611,9 @@ func (m *redisMeta) cleanupLeakedChunks(delete bool) {
 				continue
 			}
 			ino, _ := strconv.ParseUint(ps[0][prefix+1:], 10, 64)
+			if _, ok := cold.unitOf(Ino(ino)); ok {
+				continue
+			}
 			ikeys = append(ikeys, k)
 			rs = append(rs, p.Exists(ctx, m.inodeKey(Ino(ino))))
 		}
@@ -3927,6 +3935,11 @@ func (m *redisMeta) scanAllChunks(ctx Context, ch chan<- cchunk, bar *utils.Bar)
 
 func (m *redisMeta) cleanupLeakedInodes(delete bool) {
 	var ctx = Background()
+	cold, err := m.doLoadCapsuleSet(ctx, -1)
+	if err != nil {
+		logger.Errorf("Load evicted metadata, skip cleanup of leaked inodes: %s", err)
+		return
+	}
 	var foundInodes = make(map[Ino]struct{})
 	foundInodes[RootInode] = struct{}{}
 	foundInodes[TrashInode] = struct{}{}
@@ -3961,6 +3974,9 @@ func (m *redisMeta) cleanupLeakedInodes(delete bool) {
 			var attr Attr
 			m.parseAttr([]byte(v.(string)), &attr)
 			ino, _ := strconv.Atoi(keys[i][prefix+1:])
+			if _, ok := cold.unitOf(Ino(ino)); ok {
+				continue
+			}
 			if _, ok := foundInodes[Ino(ino)]; !ok && time.Unix(attr.Ctime, 0).Before(cutoff) {
 				logger.Infof("found dangling inode: %s %+v", keys[i], attr)
 				if delete {
@@ -4055,7 +4071,33 @@ func (m *redisMeta) CleanupSlices(ctx Context) syscall.Errno {
 
 func (m *redisMeta) ScanSlices(ctx Context, opt *ScanSlicesOption, fn func(Ino, Slice) error) syscall.Errno {
 	logger.Debugf("start scanning slices...")
+	for i := 0; ; i++ {
+		ver, err := m.rdb.Get(ctx, m.capsuleVerKey()).Int64()
+		if err != nil && err != redis.Nil {
+			return errno(err)
+		}
+		if err = m.scanCapsuleSlices(ctx, fn); err != nil {
+			logger.Errorf("scan evicted metadata: %s", err)
+			return syscall.EIO
+		}
+		if st := m.scanHotSlices(ctx, opt, fn); st != 0 {
+			return st
+		}
+		after, err := m.rdb.Get(ctx, m.capsuleVerKey()).Int64()
+		if err != nil && err != redis.Nil {
+			return errno(err)
+		}
+		if after == ver {
+			return 0
+		}
+		if i >= 5 {
+			logger.Errorf("evicted metadata keeps changing during the slice scan")
+			return syscall.EAGAIN
+		}
+	}
+}
 
+func (m *redisMeta) scanHotSlices(ctx Context, opt *ScanSlicesOption, fn func(Ino, Slice) error) syscall.Errno {
 	p := m.rdb.Pipeline()
 	err := m.scan(ctx, "c*_*", func(keys []string) error {
 		for _, key := range keys {
@@ -4095,10 +4137,6 @@ func (m *redisMeta) ScanSlices(ctx Context, opt *ScanSlicesOption, fn func(Ino, 
 	if err != nil {
 		logger.Warnf("scan chunks: %s", err)
 		return errno(err)
-	}
-	if err = m.scanCapsuleSlices(ctx, fn); err != nil {
-		logger.Errorf("scan evicted metadata: %s", err)
-		return syscall.EIO
 	}
 
 	if opt.ScanPending {

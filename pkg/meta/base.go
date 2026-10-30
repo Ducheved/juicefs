@@ -302,7 +302,7 @@ type baseMeta struct {
 
 	capsules     atomic.Pointer[capsuleSet]
 	capsuleStore object.ObjectStorage
-	capsuleMu    sync.Mutex
+	capsuleLocks sync.Map
 
 	sessWG sync.WaitGroup
 
@@ -801,6 +801,11 @@ func (m *baseMeta) currentSessionInfo() []byte {
 }
 
 func (m *baseMeta) NewSession(record bool) error {
+	if c, ok := m.en.(capsuleEngine); ok {
+		if err := c.doCheckEvicting(Background()); err != nil {
+			return err
+		}
+	}
 	m.sessCtx = Background()
 	ctx := m.sessCtx
 	go m.refresh(ctx)
@@ -808,6 +813,7 @@ func (m *baseMeta) NewSession(record bool) error {
 	if err := m.en.cacheACLs(ctx); err != nil {
 		return err
 	}
+	m.refreshCapsules(ctx)
 
 	if m.conf.ReadOnly {
 		logger.Infof("Create read-only session OK with version: %s", version.Version())
@@ -833,7 +839,6 @@ func (m *baseMeta) NewSession(record bool) error {
 	}
 
 	m.loadQuotas()
-	m.refreshCapsules(Background())
 
 	m.sessWG.Add(3)
 	go m.flushStats(ctx)
@@ -1446,9 +1451,12 @@ func (r *baseMeta) Resolve(ctx Context, parent Ino, dpath string, inode *Ino, at
 	for dpath != "" {
 		ps := strings.SplitN(dpath, "/", 2)
 		if ps[0] != "" {
-			r := r.en.doLookup(ctx, *inode, ps[0], inode, attr)
-			if r != 0 {
-				return r
+			st := r.ensureHot(ctx, *inode, true)
+			if st == 0 {
+				st = r.en.doLookup(ctx, *inode, ps[0], inode, attr)
+			}
+			if st != 0 {
+				return st
 			}
 		}
 		if len(ps) == 1 {
@@ -3893,6 +3901,9 @@ func (m *baseMeta) saveACL(rule *aclAPI.Rule, aclMaxId *uint32) uint32 {
 }
 
 func (m *baseMeta) SetFacl(ctx Context, ino Ino, aclType uint8, rule *aclAPI.Rule) syscall.Errno {
+	if st := m.ensureHot(ctx, m.checkRoot(ino), false); st != 0 {
+		return st
+	}
 	if aclType != aclAPI.TypeAccess && aclType != aclAPI.TypeDefault {
 		return syscall.EINVAL
 	}
@@ -3913,6 +3924,9 @@ func (m *baseMeta) SetFacl(ctx Context, ino Ino, aclType uint8, rule *aclAPI.Rul
 
 func (m *baseMeta) GetFacl(ctx Context, ino Ino, aclType uint8, rule *aclAPI.Rule) syscall.Errno {
 	ino = m.checkRoot(ino)
+	if st := m.ensureHot(ctx, ino, false); st != 0 {
+		return st
+	}
 	var err error
 	if err = m.getFaclFromCache(ctx, ino, aclType, rule); err == nil {
 		return 0
