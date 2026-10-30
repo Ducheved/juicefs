@@ -26,6 +26,7 @@ import (
 	"sort"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	aclAPI "github.com/juicedata/juicefs/pkg/acl"
@@ -295,6 +296,24 @@ func TestMemKVClient(t *testing.T) {
 		t.Fatalf("create meta: %s", err)
 	}
 	testMeta(t, m)
+}
+
+func TestMemKVUserGroupQuotaRefresh(t *testing.T) {
+	var client tkvClient
+	testUserGroupQuotaRefresh(t, func() Meta {
+		conf := testConfig()
+		conf.Heartbeat = 100 * time.Millisecond
+		m, err := newKVMeta("memkv", "jfs-ug-quota-refresh", conf)
+		if err != nil {
+			t.Fatalf("create meta: %s", err)
+		}
+		if client == nil {
+			client = m.(*kvMeta).client
+		} else {
+			m.(*kvMeta).client = client
+		}
+		return m
+	})
 }
 
 func TestTiKVClient(t *testing.T) { //skip mutate

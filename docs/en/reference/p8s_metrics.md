@@ -58,6 +58,8 @@ If you haven't yet set up monitoring for JuiceFS, read [monitoring and data visu
 
 Directory quotas carry an `inode` label, user quotas a `uid` label, and group quotas a `gid` label.
 
+Each client exports only the quotas it used in the last few minutes.
+
 | Name                                        | Description                                   | Unit |
 |---------------------------------------------|-----------------------------------------------|------|
 | `juicefs_dir_quota_max_space_bytes`         | Directory quota maximum space                 | byte |
