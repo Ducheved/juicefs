@@ -58,10 +58,12 @@ for engine in $ENGINES; do
     procs=$(( w < PROCS ? w : PROCS ))
     cg_make $LCG max
     c0=$(cg_cpu_us $CG)
+    pids=
     for p in $(seq 1 $procs); do
       cg_exec $LCG taskset -c $LOAD_CPUS $S/bin/mixload -meta "$M" -random -users $USERS -dirs $DIRS -files $FILES -readers 0 -writers $((w / procs)) -seconds $SECONDS_PER_STEP -label $engine-w$w-p$p > $R/$engine-w$w-p$p.json 2> $R/$engine-w$w-p$p.err &
+      pids="$pids $!"
     done
-    wait
+    wait $pids
     c1=$(cg_cpu_us $CG)
     lc=$(cg_cpu_us $LCG)
     rmdir $LCG
