@@ -27,7 +27,7 @@ for r in $(seq 0 $((ROUNDS - 1))); do
   t1=$(date +%s); c1=$(cg_cpu_us $CG)
   files=$(( (r + 1) * 1000000 ))
   d=$(du -sb $DATA | awk '{print $1}')
-  echo "round=$r files=$files gen_s=$((t1 - t0)) gen_server_cpu_s=$(( (c1 - c0) / 1000000 )) dir_bytes=$d b_per_file=$((d / files)) cg_now_mb=$(cg_mb $CG memory.current) cg_peak_mb=$(cg_mb $CG memory.peak) rss_mb=$(( $(ps -o rss= -p $METAD_PID) / 1024 )) oom_kills=$(cg_oom $CG)"
+  echo "round=$r files=$files gen_s=$((t1 - t0)) gen_server_cpu_s=$(( (c1 - c0) / 1000000 )) dir_bytes=$d b_per_file=$((d / files)) cg_now_mb=$(cg_mb $CG memory.current) cg_peak_mb=$(cg_mb $CG memory.peak) rss_mb=$(( $(ps -o rss= -p $METAD_PID) / 1024 )) anon_mb=$(( $(awk '/^anon /{print $2}' $CG/memory.stat) / 1048576 )) file_mb=$(( $(awk '/^file /{print $2}' $CG/memory.stat) / 1048576 )) oom_kills=$(cg_oom $CG)"
   probe 1 "r$r-hot10k"
   probe $(( (r + 1) * 100 )) "r$r-all"
 done
