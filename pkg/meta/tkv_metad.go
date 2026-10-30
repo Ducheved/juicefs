@@ -43,7 +43,8 @@ type metadConn struct {
 
 type metadClient struct {
 	addr  string
-	conns chan *metadConn
+	idle  chan *metadConn
+	slots chan struct{}
 }
 
 func newMetadClient(addr string) (tkvClient, error) {
@@ -57,7 +58,7 @@ func newMetadClient(addr string) (tkvClient, error) {
 			return nil, fmt.Errorf("invalid conns %q", v)
 		}
 	}
-	c := &metadClient{addr: u.Host, conns: make(chan *metadConn, conns)}
+	c := &metadClient{addr: u.Host, idle: make(chan *metadConn, conns), slots: make(chan struct{}, conns)}
 	if _, _, err := c.call(proto.NewEncoder(proto.OpPing).Frame()); err != nil {
 		return nil, fmt.Errorf("ping metad %s: %s", u.Host, err)
 	}
@@ -69,12 +70,18 @@ func newMetadClient(addr string) (tkvClient, error) {
 
 func (c *metadClient) conn() (*metadConn, error) {
 	select {
-	case cn := <-c.conns:
+	case cn := <-c.idle:
 		return cn, nil
 	default:
 	}
+	select {
+	case cn := <-c.idle:
+		return cn, nil
+	case c.slots <- struct{}{}:
+	}
 	nc, err := net.DialTimeout("tcp", c.addr, 5*time.Second)
 	if err != nil {
+		<-c.slots
 		return nil, err
 	}
 	if tc, ok := nc.(*net.TCPConn); ok {
@@ -83,12 +90,9 @@ func (c *metadClient) conn() (*metadConn, error) {
 	return &metadConn{nc, bufio.NewReaderSize(nc, 64<<10), bufio.NewWriterSize(nc, 64<<10)}, nil
 }
 
-func (c *metadClient) put(cn *metadConn) {
-	select {
-	case c.conns <- cn:
-	default:
-		_ = cn.c.Close()
-	}
+func (c *metadClient) discard(cn *metadConn) {
+	_ = cn.c.Close()
+	<-c.slots
 }
 
 func (c *metadClient) call(frame []byte) (byte, []byte, error) {
@@ -105,10 +109,10 @@ func (c *metadClient) call(frame []byte) (byte, []byte, error) {
 		status, body, err = proto.ReadFrame(cn.r)
 	}
 	if err != nil {
-		_ = cn.c.Close()
+		c.discard(cn)
 		return 0, nil, err
 	}
-	c.put(cn)
+	c.idle <- cn
 	switch status {
 	case proto.StatusOK:
 		return status, body, nil
@@ -222,8 +226,8 @@ func (c *metadClient) reset(prefix []byte) error {
 func (c *metadClient) close() error {
 	for {
 		select {
-		case cn := <-c.conns:
-			_ = cn.c.Close()
+		case cn := <-c.idle:
+			c.discard(cn)
 		default:
 			return nil
 		}
