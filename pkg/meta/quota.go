@@ -80,8 +80,9 @@ const (
 	quotaCacheSize = 100000
 	maxQuotaChain  = 1000
 
-	parentRefreshBatch   = 10000
+	parentRefreshBatch   = 1000
 	parentRefreshWorkers = 16
+	parentVerifyBeats    = 10
 )
 
 type iQuota struct {
@@ -676,7 +677,7 @@ func (m *baseMeta) getDirParent(ctx Context, inode Ino) (Ino, syscall.Errno) {
 func (m *baseMeta) refreshDirParents(ctx Context) {
 	now := time.Now()
 	idle := now.Add(-quotaCacheIdle).UnixNano()
-	stale := now.Add(-m.conf.Heartbeat / 2).UnixNano()
+	stale := now.Add(-m.conf.Heartbeat * parentVerifyBeats).UnixNano()
 	m.parentMu.Lock()
 	touched := make([]int64, 0, len(m.dirParents))
 	for _, p := range m.dirParents {

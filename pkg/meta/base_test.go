@@ -5092,7 +5092,7 @@ func testDirQuotaRefresh(t *testing.T, newClient func() Meta) {
 		}
 	}
 	refresh := func(m Meta) {
-		time.Sleep(m.getBase().conf.Heartbeat)
+		time.Sleep(m.getBase().conf.Heartbeat * parentVerifyBeats)
 		m.getBase().loadQuotas()
 	}
 	rename := func(m Meta, src Ino, dst Ino, name string) {
@@ -5264,7 +5264,14 @@ func testDirQuotaRefreshFaults(t *testing.T, newClient func() Meta) {
 		t.Fatalf("mkdir: %s", st)
 	}
 	base.checkDirQuota(ctx, x, 0, 1)
-	time.Sleep(base.conf.Heartbeat)
+	var verified atomic.Int32
+	fault.onGetAttr = func(Ino) { verified.Add(1) }
+	time.Sleep(2 * base.conf.Heartbeat)
+	base.refreshDirParents(ctx)
+	if n := verified.Load(); n != 0 {
+		t.Fatalf("parents verified %d times within the verify interval", n)
+	}
+	time.Sleep(base.conf.Heartbeat * parentVerifyBeats)
 	fault.onGetAttr = func(ino Ino) {
 		if ino == x {
 			base.setDirParent(x, y)
