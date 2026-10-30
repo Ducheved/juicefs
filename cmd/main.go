@@ -87,6 +87,7 @@ func Main(args []string) error {
 			cmdSummary(),
 			cmdCompact(),
 			cmdTier(),
+			cmdMetad(),
 		},
 	}
 
