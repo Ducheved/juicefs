@@ -9,7 +9,7 @@ Metadata on local SSD with a bounded RAM cache; object storage holds file data a
 ## Gates before choosing a backend
 
 1. Redis/Lua dependency inventory of JuiceFS and of every external writer, verified on each candidate. Status: JuiceFS done for Kvrocks 2.17.0 (`rnd/LEDGER.md`, "Redis/Lua dependency gate"); external writers are checked outside this repository.
-2. Comparative measurements on the same corpus and stand: RAM slope under a cap, p50/p99 of lookup, stat and create, CPU per operation, bytes per file, disk including WAL, behaviour on a full disk and after kill -9. Status: Kvrocks growth done to 4 M files; PostgreSQL, Badger and Valkey under the same cap pending.
+2. Comparative measurements on the same corpus and stand: RAM slope under a cap, p50/p99 of lookup, stat and create, CPU per operation, bytes per file, disk including WAL, behaviour on a full disk and after kill -9. Status: Kvrocks growth done to 8 M files; PostgreSQL, Badger and Valkey under the same cap pending.
 3. Fault semantics: atomicity of EXEC and scripts under storage errors, recovery without operator action. Status: Kvrocks full-disk done (atomic, needs restart); kill -9 with `sync yes` done (counters exact); lost-ACK replay pending.
 
 ## Kvrocks after gate 1

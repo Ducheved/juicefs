@@ -1,0 +1,26 @@
+round=0 files=1000000 gen_s=799 gen_server_cpu_s=561 sst_bytes=248310339 sst_b_per_file=248 wal_bytes=659332821 cg_now_mb=157 cg_max_mb=192 rss_mb=144 oom=0
+r0-hot10k {"create_p50_us":656,"create_p99_us":3931,"label":"r0-hot10k","stat_p50_us":334,"stat_p99_us":824} server_cpu_us_per_op=591
+r0-all {"create_p50_us":620,"create_p99_us":3060,"label":"r0-all","stat_p50_us":375,"stat_p99_us":1123} server_cpu_us_per_op=571
+round=1 files=2000000 gen_s=816 gen_server_cpu_s=587 sst_bytes=504568002 sst_b_per_file=252 wal_bytes=1334365814 cg_now_mb=176 cg_max_mb=192 rss_mb=131 oom=0
+r1-hot10k {"create_p50_us":573,"create_p99_us":1577,"label":"r1-hot10k","stat_p50_us":356,"stat_p99_us":857} server_cpu_us_per_op=543
+r1-all {"create_p50_us":602,"create_p99_us":1307,"label":"r1-all","stat_p50_us":504,"stat_p99_us":1326} server_cpu_us_per_op=615
+round=2 files=3000000 gen_s=790 gen_server_cpu_s=607 sst_bytes=756934729 sst_b_per_file=252 wal_bytes=2009186150 cg_now_mb=158 cg_max_mb=192 rss_mb=132 oom=0
+r2-hot10k {"create_p50_us":582,"create_p99_us":1269,"label":"r2-hot10k","stat_p50_us":344,"stat_p99_us":809} server_cpu_us_per_op=548
+r2-all {"create_p50_us":592,"create_p99_us":5844,"label":"r2-all","stat_p50_us":599,"stat_p99_us":69144} server_cpu_us_per_op=693
+round=3 files=4000000 gen_s=929 gen_server_cpu_s=581 sst_bytes=1007876704 sst_b_per_file=251 wal_bytes=2684898139 cg_now_mb=177 cg_max_mb=192 rss_mb=131 oom=0
+r3-hot10k {"create_p50_us":538,"create_p99_us":2122,"label":"r3-hot10k","stat_p50_us":279,"stat_p99_us":720} server_cpu_us_per_op=573
+r3-all {"create_p50_us":571,"create_p99_us":1816,"label":"r3-all","stat_p50_us":533,"stat_p99_us":1714} server_cpu_us_per_op=653
+round=4 files=5000000 gen_s=804 gen_server_cpu_s=608 sst_bytes=1260465701 sst_b_per_file=252 wal_bytes=3360713649 cg_now_mb=163 cg_max_mb=192 rss_mb=134 oom=0
+r4-hot10k {"create_p50_us":578,"create_p99_us":1496,"label":"r4-hot10k","stat_p50_us":354,"stat_p99_us":785} server_cpu_us_per_op=518
+r4-all {"create_p50_us":658,"create_p99_us":1539,"label":"r4-all","stat_p50_us":702,"stat_p99_us":1866} server_cpu_us_per_op=705
+round=5 files=6000000 gen_s=756 gen_server_cpu_s=654 sst_bytes=1354123402 sst_b_per_file=225 wal_bytes=4036775384 cg_now_mb=162 cg_max_mb=192 rss_mb=134 oom=0
+r5-hot10k {"create_p50_us":575,"create_p99_us":1398,"label":"r5-hot10k","stat_p50_us":370,"stat_p99_us":916} server_cpu_us_per_op=556
+r5-all {"create_p50_us":660,"create_p99_us":1649,"label":"r5-all","stat_p50_us":572,"stat_p99_us":1386} server_cpu_us_per_op=685
+round=6 files=7000000 gen_s=751 gen_server_cpu_s=598 sst_bytes=1307940872 sst_b_per_file=186 wal_bytes=4712802943 cg_now_mb=169 cg_max_mb=192 rss_mb=137 oom=0
+r6-hot10k {"create_p50_us":581,"create_p99_us":1271,"label":"r6-hot10k","stat_p50_us":370,"stat_p99_us":1023} server_cpu_us_per_op=578
+r6-all {"create_p50_us":606,"create_p99_us":1110,"label":"r6-all","stat_p50_us":583,"stat_p99_us":1395} server_cpu_us_per_op=688
+round=7 files=8000000 gen_s=761 gen_server_cpu_s=624 sst_bytes=1386153727 sst_b_per_file=173 wal_bytes=5388881798 cg_now_mb=172 cg_max_mb=192 rss_mb=127 oom=0
+r7-hot10k {"create_p50_us":544,"create_p99_us":1238,"label":"r7-hot10k","stat_p50_us":387,"stat_p99_us":944} server_cpu_us_per_op=516
+r7-all {"create_p50_us":622,"create_p99_us":1378,"label":"r7-all","stat_p50_us":597,"stat_p99_us":1126} server_cpu_us_per_op=656
+== done 12:30:56 oom=0
+exit=0

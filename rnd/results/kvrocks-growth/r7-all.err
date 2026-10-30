@@ -1,0 +1,5 @@
+2026/10/30 12:30:48.779894 juicefs[17042] <INFO>: Meta address: redis://127.0.0.1:6668/1 [NewClient@interface.go:686]
+2026/10/30 12:30:48.781868 juicefs[17042] <INFO>: Ping redis latency: 79.929µs [checkServerConfig@redis.go:4712]
+2026/10/30 12:30:48.785006 juicefs[17042] <INFO>: Create session 24 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]
+2026/10/30 12:30:56.321352 juicefs[17042] <INFO>: flush session 24: [FlushSession@base.go:1048]
+2026/10/30 12:30:56.322192 juicefs[17042] <INFO>: close session 24: <nil> [CloseSession@base.go:1037]

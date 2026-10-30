@@ -232,5 +232,9 @@ Script: `rnd/kvrocks-growth.sh`; block cache 64 MB, write buffer 8 MB × 2, `syn
 | 2 M | 252 | 1.33 | 192 | 0 | 356 / 857 | 504 / 1326 | 602 / 1307 | 615 |
 | 3 M | 252 | 2.01 | 192 | 0 | 344 / 809 | 599 / 69144 | 592 / 5844 | 693 |
 | 4 M | 251 | 2.68 | 192 | 0 | 279 / 720 | 533 / 1714 | 571 / 1816 | 653 |
+| 5 M | 252 | 3.36 | 192 | 0 | 354 / 785 | 702 / 1866 | 658 / 1539 | 705 |
+| 6 M | 225 | 4.04 | 192 | 0 | 370 / 916 | 572 / 1386 | 660 / 1649 | 685 |
+| 7 M | 186 | 4.71 | 192 | 0 | 370 / 1023 | 583 / 1395 | 606 / 1110 | 688 |
+| 8 M | 173 | 5.39 | 192 | 0 | 387 / 944 | 597 / 1126 | 622 / 1378 | 656 |
 
-RAM stays at the cap while files grow 4×; the hot set stays flat; uniform reads over all files pay disk reads (one p99 spike to 69 ms at 3 M).
+Raw: `results/kvrocks-growth.txt`, `results/kvrocks-growth/`. RAM stays at the cap while files grow 8×; the hot set stays flat; uniform reads over all files pay disk reads (one p99 spike to 69 ms at 3 M). SST shrinks to 173 B/file as compaction reaches lower levels; archived WAL grows linearly with writes (5.4 GB at 8 M).
