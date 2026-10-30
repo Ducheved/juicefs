@@ -84,3 +84,15 @@ Fixed in `fbe4590`, each with a test that fails on `6391999`:
 - Gateway and the Java SDK get the capsule storage.
 
 Still open (PoC limits): read-only mounts are not registered as sessions and cannot be detected by the offline fence; walking commands on `/` (compact, tree summary with depth, user/group usage scans) hydrate every unit they touch; periodic metadata backup is refused while units are cold; MetaVersion is never lowered back; a lost ACK on the final hydrate txn can leak the capsule object; chunk keys at or beyond file length are not captured.
+
+## Online eviction and end-to-end
+
+| Item | Label | Value |
+|---|---|---|
+| Online eviction with a second client creating files and listing the tree | RUN | ~920 files created during eviction, none lost, listings never incomplete (`TestRedisCapsuleOnline`, 3 runs + `-race`) |
+| Busy tree | RUN | eviction returns EAGAIN and the tree stays hot when it is used before cleanup |
+| Two FUSE mounts alive, tree idle | RUN | keys 466 → 24 in 3.7 s; reads through the other mount (kernel-cached inodes) load it back; sha256 of 200 files, inode numbers, modes, links, sizes identical |
+| Real `gc --delete` with objects older than 1 h while the tree is cold | RUN | 202 valid, 0 leaked, nothing deleted, contents intact |
+| Upstream main binary on the volume | RUN | `mount` and `gc` refuse: incompatible metadata version 2 |
+| Image on `juicedata/mount:ce-v1.4.2` with the integration binary (static, musl) | RUN | mount in container, online evict, transparent load, contents identical |
+| `quota set` without `--strict` on a directory being written records usage from unflushed dir stats | RUN on official v1.4.2 and on the fork | 286 / 261 instead of 301 inodes; `quota check --strict` reports inconsistent. Upstream behavior |
