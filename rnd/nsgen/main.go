@@ -220,7 +220,10 @@ func main() {
 	bg := context.Background()
 
 	res := result{Time: time.Now().UTC().Format(time.RFC3339), Meta: *metaURL, Shape: sh}
-	res.Before, res.Server = memInfo(bg, rdb)
+	redisMeta := u.Scheme == "redis" || u.Scheme == "rediss"
+	if redisMeta {
+		res.Before, res.Server = memInfo(bg, rdb)
+	}
 
 	ctx := meta.Background()
 	start := time.Now()
@@ -315,8 +318,10 @@ func main() {
 	if err := m.CloseSession(); err != nil {
 		log.Printf("close session: %s", err)
 	}
-	res.After, _ = memInfo(bg, rdb)
-	if *measure {
+	if redisMeta {
+		res.After, _ = memInfo(bg, rdb)
+	}
+	if *measure && redisMeta {
 		res.Families = scanFamilies(bg, rdb, "")
 	}
 	delta := float64(res.After["used_memory"] - res.Before["used_memory"])
