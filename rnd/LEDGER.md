@@ -97,7 +97,7 @@ Still open (PoC limits): read-only mounts are not registered as sessions and can
 | Image on `juicedata/mount:ce-v1.4.2` with the integration binary (static, musl) | RUN | mount in container, online evict, transparent load, contents identical |
 | `quota set` without `--strict` on a directory being written records usage from unflushed dir stats | RUN on official v1.4.2 and on the fork | 286 / 261 instead of 301 inodes; `quota check --strict` reports inconsistent. Upstream behavior |
 
-## PostgreSQL 17 (control, PG-only)
+## PostgreSQL 16 (control, PG-only)
 
 | Item | Label | Value |
 |---|---|---|
@@ -129,8 +129,41 @@ Still open (PoC limits): read-only mounts are not registered as sessions and can
 | Item | Label | Value |
 |---|---|---|
 | Before: each client on every refresh HSCANs all user and group quotas under `quotasFlushLock` | SOURCE | `v1.4.2`, `upstream/main` `loadQuotas` |
-| Q = 100 000 uid quotas, one client, 10 uids in use (`zz_ugbench_test.go`, base vs change, same Valkey) | RUN | refresh 316 ms → 0.16 ms, 7.3 MB → 562 B per refresh, a flush during refresh waited 305 ms → 0.18 ms |
-| C = 1 000 clients, 12 s heartbeat, extrapolated | CALC | ≈ 610 MB/s → ≈ 47 KB/s out of Valkey |
+| Q = 100 000 uid quotas, one client, 10 uids in use (`zz_ugbench_test.go`, base vs change, same Redis 7.0.15) | RUN | refresh 316 ms → 0.16 ms, 7.3 MB → 562 B per refresh, a flush during refresh waited 305 ms → 0.18 ms |
+| C = 1 000 clients, 12 s heartbeat, extrapolated | CALC | ≈ 610 MB/s → ≈ 47 KB/s out of the engine |
 | Miss on first write of a uid/gid: one HMGET for uid and gid together, fail-closed EIO after 3 failed loads | RUN | `testUserGroupQuotaRefresh` on Redis, SQLite, MemKV |
 | Refresh outside the flush lock; a flush during the read keeps local usage and the stale ids are reread | RUN | mutations removing the generation check or the reread fail the test |
 | Adversarial review | RUN | found an SQLite deadlock (fetch under the flush lock inside a txn) in an intermediate version; fixed, regression test hangs on the old code |
+
+Corrections (2026-10-30): the PostgreSQL control ran on PostgreSQL 16, not 17; unit tests, the auto-evict FUSE run and the user quota bench ran on Redis 7.0.15 at port 6379, not Valkey.
+
+## Metadata on SSD with a bounded RAM cap (scale model of 39 M files / 2 GiB)
+
+Their case: 39 M files ≈ 8.6 GiB in Valkey (≈ 237 B/file) against a 2 GiB ceiling. On Kvrocks the same namespace is ≈ 36 GB on SSD (≈ 925 B/file), so 2 GiB is ≈ 5.5 % of the data. Model: Kvrocks 2.17.0 with 4 M files (3.7 GB), container memory capped by cgroup including the page cache, host caches dropped before each run, `sync yes`, probe of 5 000 random stats and creates per working set (`rnd/results/kvrocks-cap`).
+
+| Cap (block cache) | Working set | stat p50 / p99 | create p50 / p99 | cgroup memory | OOM |
+|---|---|---|---|---|---|
+| 256 MB (96 MB) | 10 k files | 258 µs / 33.9 ms (warm-up) | 722 µs / 2.7 ms | 255 MB | 0 |
+| 256 MB (96 MB) | 100 k | 226 µs / 0.87 ms | 669 µs / 1.9 ms | 244 MB | 0 |
+| 256 MB (96 MB) | 1 M | 234 µs / 0.87 ms | 805 µs / 1.9 ms | 255 MB | 0 |
+| 256 MB (96 MB) | 4 M (all) | 291 µs / 0.99 ms | 761 µs / 1.7 ms | 255 MB | 0 |
+| 4 GB (512 MB) | 10 k – 4 M | 181–310 µs / 0.6–1.2 ms | 692–800 µs | up to 1.2 GB | 0 |
+
+Valkey on the same probe: stat p50 95 µs, create ≈ 550 µs. Memory stays at the cap and latency barely depends on the working set; the cost is ≈ 2.5× on stat and ≈ 1.3× on create against RAM-only Valkey.
+
+## JuiceFS Enterprise numbers (vendor blog, juicefs.com/en/blog/engineering/reduce-metadata-memory-usage)
+
+All-in-memory engine with Raft and subtree partitions: ≈ 600 → 300 → 150 → 50 B/file via arenas, serialized idle directories and in-memory compression; planned 100 B/file, production 30 GiB for 300 M files. Comparison in the post: CE Redis 430 B/file, HDFS 370, CephFS 2 700, Alluxio heap 2 100. At 100 B/file 39 M files need ≈ 3.9 GB, still above a 2 GiB ceiling [VENDOR CLAIM].
+
+## Big-O audit of the S3 capsule track (C = 1 000, U = 1e5, R = 50, heartbeat 12 s)
+
+| Cost | Value | Source |
+|---|---|---|
+| Capsule poll HKEYS every second on every mount, paid while idle | ≈ 1.1e8 elements/s, ≈ 4 Redis cores, ≈ 1.5 GB/s | `capsule.go` watchCapsules, `redis_capsule.go` doLoadCapsuleSet |
+| Full reload of all descriptors on every version bump | 1e8 HGETALL and ≈ 120 GB egress per bump fleet-wide | same |
+| ACK barrier per eviction | ≈ 250 s at U = 1e5 against a 30 s timeout | `redis_capsule.go` waitAcks |
+| Client RAM for routing runs | ≈ 250 MB per mount | `capsule.go` newCapsuleSet |
+| Automatic metadata backup above 1 M inodes with interval ≤ 1 h | skipped by upstream; with any evicted unit it fails after a full SCAN | `pkg/vfs/backup.go`, `redis_capsule.go` doListCapsules |
+| Directory parent verification with quotas | up to 1e4 GET per heartbeat per writing mount; now every ten heartbeats, batch 1 000 | `quota.go` refreshDirParents, `50336ef` |
+
+Decision (owner, 2026-10-30): no on-demand metadata reads from S3 in the main design; metadata lives on SSD with a bounded RAM cache, S3 keeps file contents and rare batch backups.

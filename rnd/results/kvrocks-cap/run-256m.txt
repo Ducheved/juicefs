@@ -1,0 +1,6 @@
+start mem=256m cache=96MB cg_now_mb=64 cg_max_mb=65 rss_mb=38 read_mb=45 keys=0
+users=1 ws_files=10000 {"create_p50_us":722,"create_p99_us":2746,"label":"ws1","stat_p50_us":258,"stat_p99_us":33875} cg_now_mb=255 cg_max_mb=256 rss_mb=157 read_mb=413
+users=10 ws_files=100000 {"create_p50_us":669,"create_p99_us":1908,"label":"ws10","stat_p50_us":226,"stat_p99_us":872} cg_now_mb=244 cg_max_mb=256 rss_mb=178 read_mb=555
+users=100 ws_files=1000000 {"create_p50_us":805,"create_p99_us":1885,"label":"ws100","stat_p50_us":234,"stat_p99_us":873} cg_now_mb=255 cg_max_mb=256 rss_mb=163 read_mb=600
+users=400 ws_files=4000000 {"create_p50_us":761,"create_p99_us":1732,"label":"ws400","stat_p50_us":291,"stat_p99_us":985} cg_now_mb=255 cg_max_mb=256 rss_mb=165 read_mb=675
+== done 10:15:32 oom=0

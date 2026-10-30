@@ -1,0 +1,196 @@
+package dbtxbench
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type DBTX interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+var (
+	_ DBTX = (*pgxpool.Pool)(nil)
+	_ DBTX = (pgx.Tx)(nil)
+	_ DBTX = (*pgx.Conn)(nil)
+)
+
+type fake struct{ n int }
+
+//go:noinline
+func (f *fake) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	f.n += len(args)
+	return pgconn.CommandTag{}, nil
+}
+
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+type txKey struct{}
+type k1 struct{}
+type k2 struct{}
+type k3 struct{}
+type k4 struct{}
+
+func deepCtx(tx any) context.Context {
+	ctx := context.WithValue(context.Background(), txKey{}, tx)
+	ctx = context.WithValue(ctx, k1{}, 1)
+	ctx = context.WithValue(ctx, k2{}, 2)
+	ctx = context.WithValue(ctx, k3{}, 3)
+	return context.WithValue(ctx, k4{}, 4)
+}
+
+func BenchmarkFakeDirect(b *testing.B) {
+	f := &fake{}
+	ctx := context.Background()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		f.Exec(ctx, "q", i, "x")
+	}
+}
+
+var opaque execer
+
+//go:noinline
+func newExecer() execer { return &fake{} }
+
+func BenchmarkFakeInterface(b *testing.B) {
+	e := newExecer()
+	ctx := context.Background()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		e.Exec(ctx, "q", i, "x")
+	}
+}
+
+func BenchmarkFakeCtxTx(b *testing.B) {
+	pool := &fake{}
+	ctx := deepCtx(&fake{})
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var e execer = pool
+		if tx, ok := ctx.Value(txKey{}).(*fake); ok {
+			e = tx
+		}
+		e.Exec(ctx, "q", i, "x")
+	}
+}
+
+func pool(b *testing.B) *pgxpool.Pool {
+	url := os.Getenv("PGURL")
+	if url == "" {
+		b.Skip("PGURL not set")
+	}
+	p, err := pgxpool.New(context.Background(), url)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(p.Close)
+	return p
+}
+
+const q = "select $1::int"
+
+func BenchmarkPoolDirect(b *testing.B) {
+	p := pool(b)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := p.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPoolInterface(b *testing.B) {
+	var db DBTX = pool(b)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := db.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPoolCtxFallback(b *testing.B) {
+	p := pool(b)
+	ctx := deepCtx(nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var db DBTX = p
+		if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+			db = tx
+		}
+		if _, err := db.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkTxDirect(b *testing.B) {
+	p := pool(b)
+	ctx := context.Background()
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := tx.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkTxInterface(b *testing.B) {
+	p := pool(b)
+	ctx := context.Background()
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	var db DBTX = tx
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := db.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkTxCtx(b *testing.B) {
+	p := pool(b)
+	tx, err := p.Begin(context.Background())
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	ctx := deepCtx(tx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var db DBTX = p
+		if t, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+			db = t
+		}
+		if _, err := db.Exec(ctx, q, i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
