@@ -631,7 +631,7 @@ func (s *Server) propose(reqs []*request) {
 	}
 	status := byte(proto.StatusUnknown)
 	if errors.Is(err, raft.ErrProposalDropped) {
-		status = proto.StatusConflict
+		status = proto.StatusNotLeader
 	}
 	s.mu.Lock()
 	waiting, ok := s.waiters[d.prop]
