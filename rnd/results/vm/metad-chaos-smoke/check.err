@@ -1,0 +1,2 @@
+2026/10/30 21:33:15.957058 juicefs[115296] <INFO>: Meta address: metad://127.0.0.1:9531,127.0.0.1:9532,127.0.0.1:9533/chk?conns=8 [NewClient@interface.go:686]
+2026/10/30 21:33:15.961869 juicefs[115296] <INFO>: Create session 1 OK with version: 1.5.0-dev+unknown [NewSession@base.go:827]

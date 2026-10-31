@@ -47,6 +47,12 @@ start_metad() {
   metad_start /srv/stand/stand/wc-metad 6390 $ENGINE_CG 2G
   M="metad://127.0.0.1:6390/jfs?conns=64"
 }
+start_metad3() {
+  rm -rf /srv/stand/stand/wc-metad3-1 /srv/stand/stand/wc-metad3-2 /srv/stand/stand/wc-metad3-3
+  ENGINE_CG=/sys/fs/cgroup/wc-metad3
+  metad3_start /srv/stand/stand/wc-metad3 6390 $ENGINE_CG 2G
+  M="metad://$METAD_URL/jfs?conns=64"
+}
 echo "label=$LABEL users=$USERS dirs=$DIRS files=$FILES procs=$PROCS engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
 for engine in $ENGINES; do
   docker rm -f -v wc-engine >/dev/null 2>&1 || true
@@ -78,6 +84,10 @@ print(f"engine={engine} writers={w} procs={procs} cycles_per_s={ops / secs:.0f} 
       f"loader_cores={int(lc) / 1e6 / secs:.2f} engine_cpu_us_per_cycle={(int(c1) - int(c0)) / max(ops, 1):.0f}")
 EOF
   done
-  if [ -n "$ENGINE_CG" ]; then metad_stop $ENGINE_CG; else docker rm -f -v wc-engine >/dev/null; fi
+  case $engine in
+    metad) metad_stop $ENGINE_CG ;;
+    metad3) metad3_stop $ENGINE_CG ;;
+    *) docker rm -f -v wc-engine >/dev/null ;;
+  esac
 done
 echo "== done $(date -u +%T)"

@@ -1,6 +1,6 @@
 # metad: durable, highly available metadata service in ≤ 2 GiB per replica
 
-Status: draft, 2026-10-30. P0, P1 and server-side lookup done. Evidence labels as in `LEDGER.md`.
+Status: draft, 2026-10-31. P0, P1, server-side lookup and P2 done. Evidence labels as in `LEDGER.md`.
 
 ## Constraints
 
@@ -92,9 +92,17 @@ P1, single-node `metad` with the JuiceFS client over the network, same VM and ca
 - Write ceiling 1 726 → 6 133 create/unlink cycles/s (Valkey 660 → 3 723, Kvrocks ≈ 550, PostgreSQL ≈ 1 200).
 - Growth to 4 M: 4.5× faster generation than Valkey, create p50 370 µs (Valkey 815), stat p50 ≈ 380 µs (Valkey ≈ 210), server CPU per probe op ≈ 600 µs (Valkey ≈ 350); memory bounded by the cache, 0 OOM.
 - Server-side lookup (entry and attribute in one round trip, `b7108445`): stat p50 ≈ 230–250 µs (Valkey ≈ 210), server CPU per probe op ≈ 500–530 µs (RUN, `LEDGER.md` "metad server-side lookup").
-- A commit that arrives during the previous batch's fsync waits for it; pipelined commits are part of P2.
+- A commit that arrives during the previous batch's fsync waits for it.
 
-Not yet measured: replication (P2), 39 M through the server, many client processes.
+P2, three Raft replicas, lost-ACK resolution through the log (RUN, `LEDGER.md` "metad P2"; all three replicas on the same 2 cores, disk and 2 GiB cgroup):
+
+- Gate passed: 600 s of kill -9 every 10 s, 1.17 M operations linearizable, 0 acknowledged writes or creates lost.
+- Failover: leader kill 1.0–2.0 s without a successful op; one follower: none; both followers (quorum lost for 5 s): 5.4–6.8 s.
+- Write ceiling 637 → 2 849 cycles/s for three synchronous replicas (Valkey, one node with asynchronous replicas: 660 → 3 723).
+- Growth to 4 M: generation 1.4× faster than Valkey, stat p50 ≈ 225–258 µs (Valkey ≈ 210), create p50 ≈ 1.1 ms (Valkey 815 µs), 0 OOM inside one 2 GiB cgroup for all three replicas, 177 B/file of disk per replica.
+- One replica now costs more than P1 (create 580 vs 370 µs, generation 1.6× slower): a commit takes two Raft `Ready` rounds and writes a transaction record. Next to remove.
+
+Not yet measured: 39 M through the server, many client processes, replicas on separate machines, follower catch-up.
 
 ## Plan
 

@@ -1,0 +1,10 @@
+label=spread-p2 users=8 dirs=64 files=20 procs=4 engine_cpus=0-1 load_cpus=2-3
+engine=metad writers=4 procs=4 cycles_per_s=1144 p50_us_max=1631 p99_us_max=3385 engine_cores=0.74 loader_cores=0.48 engine_cpu_us_per_cycle=646
+engine=metad writers=16 procs=4 cycles_per_s=2518 p50_us_max=2872 p99_us_max=10984 engine_cores=1.14 loader_cores=0.88 engine_cpu_us_per_cycle=452
+engine=metad writers=64 procs=4 cycles_per_s=4095 p50_us_max=6203 p99_us_max=31023 engine_cores=1.45 loader_cores=1.20 engine_cpu_us_per_cycle=355
+engine=metad writers=256 procs=4 cycles_per_s=5563 p50_us_max=12788 p99_us_max=113223 engine_cores=1.88 loader_cores=1.59 engine_cpu_us_per_cycle=339
+engine=metad3 writers=4 procs=4 cycles_per_s=637 p50_us_max=2820 p99_us_max=5864 engine_cores=1.15 loader_cores=0.28 engine_cpu_us_per_cycle=1803
+engine=metad3 writers=16 procs=4 cycles_per_s=1453 p50_us_max=4894 p99_us_max=17087 engine_cores=1.36 loader_cores=0.50 engine_cpu_us_per_cycle=934
+engine=metad3 writers=64 procs=4 cycles_per_s=2403 p50_us_max=10723 p99_us_max=46132 engine_cores=1.66 loader_cores=0.86 engine_cpu_us_per_cycle=689
+engine=metad3 writers=256 procs=4 cycles_per_s=2849 p50_us_max=28320 p99_us_max=237118 engine_cores=1.79 loader_cores=1.19 engine_cpu_us_per_cycle=629
+== done 10:01:55

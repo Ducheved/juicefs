@@ -1,0 +1,166 @@
+10:01:55.898 start node 1 pid 133325
+10:01:55.900 start node 2 pid 133329
+10:01:55.903 start node 3 pid 133333
+10:01:58.961 checker pid 133360 duration 600s workers 16 keys 256
+10:02:09.006 round 1: leader is node 1, killing it
+10:02:09.017 kill -9 node 1 pid 133325
+10:02:13.021 start node 1 pid 133397
+10:02:23.068 round 2: leader is node 2, killing follower node 3
+10:02:23.080 kill -9 node 3 pid 133333
+10:02:27.085 start node 3 pid 133426
+10:02:37.132 round 3: leader is node 2, killing it
+10:02:37.146 kill -9 node 2 pid 133329
+10:02:40.152 start node 2 pid 133458
+10:02:50.208 round 4: leader is node 3, killing both followers
+10:02:50.222 kill -9 node 1 pid 133397
+10:02:50.233 kill -9 node 2 pid 133458
+10:02:55.238 start node 1 pid 133489
+10:02:55.240 start node 2 pid 133493
+10:03:05.292 round 5: leader is node 3, killing it
+10:03:05.307 kill -9 node 3 pid 133426
+10:03:08.311 start node 3 pid 133531
+10:03:18.359 round 6: leader is node 1, killing follower node 2
+10:03:18.371 kill -9 node 2 pid 133493
+10:03:20.375 start node 2 pid 133560
+10:03:30.420 round 7: leader is node 1, killing it
+10:03:30.433 kill -9 node 1 pid 133489
+10:03:34.438 start node 1 pid 133590
+10:03:44.484 round 8: leader is node 3, killing both followers
+10:03:44.496 kill -9 node 1 pid 133590
+10:03:44.511 kill -9 node 2 pid 133560
+10:03:49.515 start node 1 pid 133624
+10:03:49.518 start node 2 pid 133628
+10:03:59.566 round 9: leader is node 3, killing it
+10:03:59.581 kill -9 node 3 pid 133531
+10:04:03.586 start node 3 pid 133666
+10:04:13.632 round 10: leader is node 2, killing follower node 1
+10:04:13.645 kill -9 node 1 pid 133624
+10:04:15.649 start node 1 pid 133694
+10:04:25.699 round 11: leader is node 2, killing it
+10:04:25.713 kill -9 node 2 pid 133628
+10:04:27.717 start node 2 pid 133723
+10:04:37.771 round 12: leader is node 1, killing both followers
+10:04:37.781 kill -9 node 2 pid 133723
+10:04:37.795 kill -9 node 3 pid 133666
+10:04:42.800 start node 2 pid 133756
+10:04:42.802 start node 3 pid 133760
+10:04:52.848 round 13: leader is node 1, killing it
+10:04:52.863 kill -9 node 1 pid 133694
+10:04:55.868 start node 1 pid 133798
+10:05:05.920 round 14: leader is node 3, killing follower node 2
+10:05:05.934 kill -9 node 2 pid 133756
+10:05:07.939 start node 2 pid 133834
+10:05:17.985 round 15: leader is node 3, killing it
+10:05:18.000 kill -9 node 3 pid 133760
+10:05:22.005 start node 3 pid 133862
+10:05:32.052 round 16: leader is node 2, killing both followers
+10:05:32.064 kill -9 node 3 pid 133862
+10:05:32.078 kill -9 node 1 pid 133798
+10:05:37.083 start node 3 pid 133895
+10:05:37.086 start node 1 pid 133899
+10:05:47.131 round 17: leader is node 2, killing it
+10:05:47.145 kill -9 node 2 pid 133834
+10:05:50.149 start node 2 pid 133934
+10:06:00.197 round 18: leader is node 3, killing follower node 2
+10:06:00.209 kill -9 node 2 pid 133934
+10:06:02.213 start node 2 pid 133966
+10:06:12.263 round 19: leader is node 3, killing it
+10:06:12.278 kill -9 node 3 pid 133895
+10:06:16.283 start node 3 pid 133994
+10:06:26.339 round 20: leader is node 2, killing both followers
+10:06:26.352 kill -9 node 3 pid 133994
+10:06:26.366 kill -9 node 1 pid 133899
+10:06:31.370 start node 3 pid 134028
+10:06:31.372 start node 1 pid 134032
+10:06:41.422 round 21: leader is node 2, killing it
+10:06:41.438 kill -9 node 2 pid 133966
+10:06:43.443 start node 2 pid 134068
+10:06:53.496 round 22: leader is node 3, killing follower node 1
+10:06:53.509 kill -9 node 1 pid 134032
+10:06:56.513 start node 1 pid 134099
+10:07:06.562 round 23: leader is node 3, killing it
+10:07:06.578 kill -9 node 3 pid 134028
+10:07:08.582 start node 3 pid 134127
+10:07:18.631 round 24: leader is node 2, killing both followers
+10:07:18.642 kill -9 node 3 pid 134127
+10:07:18.656 kill -9 node 1 pid 134099
+10:07:23.661 start node 3 pid 134162
+10:07:23.664 start node 1 pid 134166
+10:07:33.712 round 25: leader is node 2, killing it
+10:07:33.726 kill -9 node 2 pid 134068
+10:07:35.730 start node 2 pid 134202
+10:07:45.776 round 26: leader is node 1, killing follower node 2
+10:07:45.788 kill -9 node 2 pid 134202
+10:07:48.794 start node 2 pid 134232
+10:07:58.839 round 27: leader is node 1, killing it
+10:07:58.856 kill -9 node 1 pid 134166
+10:08:02.861 start node 1 pid 134261
+10:08:12.919 round 28: leader is node 2, killing both followers
+10:08:12.936 kill -9 node 3 pid 134162
+10:08:12.948 kill -9 node 1 pid 134261
+10:08:17.952 start node 3 pid 134294
+10:08:17.955 start node 1 pid 134298
+10:08:28.001 round 29: leader is node 2, killing it
+10:08:28.016 kill -9 node 2 pid 134232
+10:08:30.021 start node 2 pid 134335
+10:08:40.069 round 30: leader is node 1, killing follower node 2
+10:08:40.079 kill -9 node 2 pid 134335
+10:08:43.085 start node 2 pid 134363
+10:08:53.134 round 31: leader is node 1, killing it
+10:08:53.149 kill -9 node 1 pid 134298
+10:08:57.154 start node 1 pid 134393
+10:09:07.200 round 32: leader is node 2, killing both followers
+10:09:07.216 kill -9 node 3 pid 134294
+10:09:07.228 kill -9 node 1 pid 134393
+10:09:12.233 start node 3 pid 134425
+10:09:12.236 start node 1 pid 134429
+10:09:22.299 round 33: leader is node 2, killing it
+10:09:22.314 kill -9 node 2 pid 134363
+10:09:25.318 start node 2 pid 134466
+10:09:35.362 round 34: leader is node 1, killing follower node 2
+10:09:35.375 kill -9 node 2 pid 134466
+10:09:37.381 start node 2 pid 134497
+10:09:47.437 round 35: leader is node 1, killing it
+10:09:47.454 kill -9 node 1 pid 134429
+10:09:49.461 start node 1 pid 134526
+10:09:59.507 round 36: leader is node 2, killing both followers
+10:09:59.521 kill -9 node 3 pid 134425
+10:09:59.533 kill -9 node 1 pid 134526
+10:10:04.537 start node 3 pid 134558
+10:10:04.540 start node 1 pid 134562
+10:10:14.585 round 37: leader is node 2, killing it
+10:10:14.600 kill -9 node 2 pid 134497
+10:10:16.605 start node 2 pid 134599
+10:10:26.669 round 38: leader is node 1, killing follower node 3
+10:10:26.682 kill -9 node 3 pid 134558
+10:10:28.686 start node 3 pid 134627
+10:10:38.730 round 39: leader is node 1, killing it
+10:10:38.744 kill -9 node 1 pid 134562
+10:10:41.749 start node 1 pid 134657
+10:10:51.792 round 40: leader is node 2, killing both followers
+10:10:51.807 kill -9 node 3 pid 134627
+10:10:51.818 kill -9 node 1 pid 134657
+10:10:56.823 start node 3 pid 134690
+10:10:56.826 start node 1 pid 134694
+10:11:06.868 round 41: leader is node 2, killing it
+10:11:06.883 kill -9 node 2 pid 134599
+10:11:09.889 start node 2 pid 134731
+10:11:19.939 round 42: leader is node 3, killing follower node 1
+10:11:19.953 kill -9 node 1 pid 134694
+10:11:23.958 start node 1 pid 134760
+10:11:34.004 round 43: leader is node 3, killing it
+10:11:34.021 kill -9 node 3 pid 134690
+10:11:37.026 start node 3 pid 134791
+10:11:47.085 round 44: leader is node 2, killing both followers
+10:11:47.098 kill -9 node 3 pid 134791
+10:11:47.113 kill -9 node 1 pid 134760
+10:11:52.118 start node 3 pid 134822
+10:11:52.121 start node 1 pid 134826
+10:12:03.038 checker exit 0
+{"creates_acked":129635,"creates_failed":0,"creates_lost":0,"duration_s":600,"failed_but_exist":0,"gaps_at_s_len_s":[9.33,1.033,37.46,1.035,50.55,5.751,65.62,1.237,90.75,1.851,104.83,5.354,119.89,1.032,146.02,1.804,158.11,5.482,173.17,1.039,198.31,1.353,212.39,5.757,227.46,1.132,252.59,1.032,266.68,6.142,281.75,1.291,306.89,1.394,318.97,6.713,334.04,1.135,359.17,1.961,373.26,6.107,388.33,1.642,413.46,1.965,427.54,5.861,442.63,1.185,467.76,1.083,479.85,6.795,494.91,1.444,519.05,1.889,532.13,6.034,547.19,1.759,574.33,1.59,587.42,5.688],"op_max_us":6852605,"op_p50_us":3283,"op_p99_us":48529,"reads":518855,"writes_acked":649148,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":1168003}
+10:12:03.079 cgroup peak 371 MB, oom_kills 0
+56M	/srv/stand/stand/chaos-1
+93M	/srv/stand/stand/chaos-2
+58M	/srv/stand/stand/chaos-3
+12K	/srv/stand/stand/chaos-data

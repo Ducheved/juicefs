@@ -1,0 +1,10 @@
+metad replicas=3 mem=2G cache_mb=default engine_cpus=0-1 load_cpus=2-3
+round=0 files=1000000 gen_s=4727 gen_server_cpu_s=9160 dir_bytes=1298474480 b_per_file=1298 cg_now_mb=1966 cg_peak_mb=2048 rss_mb=1156 anon_mb=937 file_mb=994 oom_kills=0
+r0-hot10k {"create_p50_us":2201,"create_p99_us":4517,"label":"r0-hot10k","stat_p50_us":239,"stat_p99_us":340} server_cpu_us_per_op=5262
+r0-all {"create_p50_us":2460,"create_p99_us":4915,"label":"r0-all","stat_p50_us":246,"stat_p99_us":440} server_cpu_us_per_op=5741
+round=1 files=2000000 gen_s=9688 gen_server_cpu_s=18853 dir_bytes=1565255872 b_per_file=782 cg_now_mb=1868 cg_peak_mb=2049 rss_mb=1335 anon_mb=1114 file_mb=722 oom_kills=0
+r1-hot10k {"create_p50_us":2088,"create_p99_us":6113,"label":"r1-hot10k","stat_p50_us":226,"stat_p99_us":358} server_cpu_us_per_op=4769
+r1-all {"create_p50_us":2063,"create_p99_us":3120,"label":"r1-all","stat_p50_us":249,"stat_p99_us":505} server_cpu_us_per_op=2946
+round=2 files=3000000 gen_s=8982 gen_server_cpu_s=16260 dir_bytes=1874636504 b_per_file=624 cg_now_mb=2047 cg_peak_mb=2049 rss_mb=1480 anon_mb=1259 file_mb=757 oom_kills=0
+r2-hot10k {"create_p50_us":1929,"create_p99_us":4650,"label":"r2-hot10k","stat_p50_us":250,"stat_p99_us":397} server_cpu_us_per_op=4153
+r2-all {"create_p50_us":2190,"create_p99_us":5692,"label":"r2-all","stat_p50_us":279,"stat_p99_us":2899} server_cpu_us_per_op=5206

@@ -1,0 +1,1 @@
+{"create":{"ops":30707,"ops_per_s":1023.5666666666667,"p50_us":6215,"p99_us":29888},"label":"metad-w64-p1","lookup":{"ops":0,"ops_per_s":0,"p50_us":0,"p99_us":0}}

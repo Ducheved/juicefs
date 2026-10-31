@@ -29,3 +29,20 @@ metad_stop() {
   wait $METAD_JOB || true
   rmdir $1
 }
+metad3_start() {
+  local data=$1 port=$2 cg=$3 mem=$4 peers= i
+  cg_make $cg $mem
+  for i in 1 2 3; do peers="$peers${peers:+,}$i=127.0.0.1:$((port + i - 1))"; done
+  METAD_PIDS=
+  for i in 1 2 3; do
+    mkdir -p $data-$i
+    bash -c "echo \$\$ > $cg/cgroup.procs; GOMAXPROCS=2 GOMEMLIMIT=600MiB exec taskset -c $ENGINE_CPUS $S/bin/juicefs-metad metad --id $i --listen 127.0.0.1:$((port + i - 1)) --peers $peers --cache-size ${METAD_CACHE_MB:-256} $data-$i" > $data-$i.log 2>&1 &
+    METAD_PIDS="$METAD_PIDS $!"
+  done
+  METAD_URL=127.0.0.1:$port,127.0.0.1:$((port + 1)),127.0.0.1:$((port + 2))
+}
+metad3_stop() {
+  kill $METAD_PIDS
+  wait $METAD_PIDS || true
+  rmdir $1
+}

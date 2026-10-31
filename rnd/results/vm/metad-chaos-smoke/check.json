@@ -1,0 +1,1 @@
+{"creates_acked":14443,"creates_failed":0,"creates_lost":0,"duration_s":60,"failed_but_exist":0,"gaps_at_s_len_s":[10,1.588,35.12,1.438,48.2,5.557],"linearizable":"Ok","op_max_us":5570595,"op_p50_us":3598,"op_p99_us":30654,"reads":57984,"writes_acked":71994,"writes_failed":0}
