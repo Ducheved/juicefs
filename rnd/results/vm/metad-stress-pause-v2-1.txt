@@ -1,0 +1,32 @@
+14:47:09.096 scenario pause duration 300s period 12s delay 50us disk 8:0
+14:47:09.099 start node 1 pid 149462
+14:47:09.102 start node 2 pid 149466
+14:47:09.105 start node 3 pid 149470
+14:47:12.168 checker pid 149500 workers 32 clients 4 keys 256
+14:47:24.224 pause leader node 2 for 2445 ms
+14:47:38.729 pause leader node 3 for 2806 ms
+14:47:53.593 pause leader node 1 for 3068 ms
+14:48:08.714 pause leader node 3 for 2554 ms
+14:48:23.318 pause leader node 1 for 2463 ms
+14:48:37.845 pause leader node 2 for 2648 ms
+14:48:52.544 pause leader node 1 for 4072 ms
+14:49:08.676 pause leader node 2 for 4172 ms
+14:49:24.897 pause leader node 1 for 1796 ms
+14:49:38.742 pause leader node 3 for 2980 ms
+14:49:53.807 pause leader node 2 for 1679 ms
+14:50:07.547 pause leader node 3 for 4492 ms
+14:50:24.091 pause leader node 1 for 2978 ms
+14:50:39.121 pause leader node 3 for 2328 ms
+14:50:53.508 pause leader node 2 for 3471 ms
+14:51:09.027 pause leader node 1 for 2832 ms
+14:51:23.910 pause leader node 3 for 3776 ms
+14:51:39.745 pause leader node 1 for 1977 ms
+14:51:53.782 pause leader node 2 for 1523 ms
+14:52:07.368 pause leader node 3 for 2785 ms
+14:52:14.745 checker exit 0, engine cores 0.91
+{"creates_acked":61769,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[11.09,2.005,25.6,2.001,40.46,2.001,55.58,1.999,70.19,2.001,84.72,2.002,99.41,2.001,115.54,2.004,131.77,1.802,145.61,2.002,160.68,1.685,174.42,2.013,190.96,2.021,205.99,2.025,220.38,2.005,235.9,2.001,250.78,2.001,266.61,1.985,280.65,1.534,294.24,2.001,300.05,0.328],"op_max_us":7904466,"op_p50_us":3734,"op_p99_us":255234,"reads":244925,"writes_acked":306253,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":551178}
+14:52:14.806 cgroup peak 808 MB, oom_kills 0
+230M	/srv/stand/stand/stress-1
+229M	/srv/stand/stand/stress-2
+229M	/srv/stand/stand/stress-3

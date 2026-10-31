@@ -1,0 +1,11 @@
+15:17:04.310 scenario fleet duration 120s period 15s delay 50us disk 8:0
+15:17:04.313 start node 1 pid 153093
+15:17:04.315 start node 2 pid 153097
+15:17:04.319 start node 3 pid 153101
+15:17:07.387 fleet pid 153132 clients 1000 active 0.2 rate 10 quotas 100
+15:19:14.362 checker exit 0, engine cores 1.15
+{"active":200,"clients":1000,"cycle_max_us":565599,"cycle_p50_us":72487,"cycle_p99_us":274695,"cycles":225104,"cycles_per_s":1874.3318079472492,"errors":0,"heartbeat_s":12,"label":"fleet-c1000-q100","measured_s":120.098265977,"prepare_s":1.629992436,"quotas":100,"sessions_up_s":0.888556633}
+15:19:14.458 cgroup peak 1437 MB, oom_kills 0
+294M	/srv/stand/stand/stress-1
+294M	/srv/stand/stand/stress-2
+296M	/srv/stand/stand/stress-3

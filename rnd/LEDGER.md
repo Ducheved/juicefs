@@ -367,3 +367,46 @@ Caps for the 3-replica runs: all three nodes share cores 0-1, one disk and one 2
 | Harness failures, not counted | RUN | first 10-min chaos run: format failed on a leftover `/var/jfs/chk`, checker never ran (dedicated bucket since); second: porcupine OOM at ≈ 16 GB with 8 registers × 175 k ops each (256 registers since) |
 | Where the single-node cost went vs P1 | INFERENCE | a commit needs two `Ready` rounds (append + sync, then apply), and each commit writes a transaction record and an expiry key; not profiled yet |
 | Not measured | NOTE | replicas on separate machines, follower catch-up speed after a restart, 39 M through the server, thousands of client processes, membership change |
+
+## metad under faults and load (`feat/metad` d48e1eb4 … 630faa83, `results/vm/metad-stress-*`, `metad-fleet-*`)
+
+Stand (`rnd/metad-stress.sh`): three nodes in their own network namespaces on a bridge, 50 µs netem delay per hop (≈ 200 µs RTT between replicas, ≈ 100 µs client to node), one cgroup per node under a shared 2 GiB cap, `GOMAXPROCS=1` each on cores 0-1, block cache 128 MB each; the load runs outside the cap on cores 2-3. Faults: `pause` = SIGSTOP of the leader for 1.5–4.5 s; `partition` = iptables isolates the leader from its peers for 3–8 s while clients still reach it; `slowdisk` = io.max 20 write IOPS on the leader (10 s) or a follower (20 s); `diskfull` = each node on its own 1.5 GB ext4 image, fallocate fills the leader's; `kill` = kill -9 of the leader. Checker `rnd/metadcheck`: 32 workers over 4 independent JuiceFS clients (each with its own leader view), 256 xattr registers + creates, porcupine.
+
+Bugs the stand found, all fixed with a regression test that fails on the old code unless noted:
+
+| # | Defect | Effect | Fix | Evidence |
+|---|---|---|---|---|
+| 1 | Leader reads were served whenever the node believed it led; an isolated leader keeps believing for up to two election timeouts while a new one commits | stale reads (linearizability) | 3b270b30: reads only under a lease = send time of a quorum-confirmed ReadIndex + (ElectionTick − 2) ticks, renewed every tick; a pause makes the monotonic clock jump past it | `TestMetadLeaseRead` (isolate the leader through an injected dialer, commit through a client that does not know it, read through one that does): fails 3/3 without the lease. Load alone did not show it (`partition-oldserver` Ok) because all clients follow the same leader |
+| 2 | Client requests had no deadline | a frozen leader stalled its clients for the whole pause although a new leader existed after ≈ 1 s | d48e1eb4: per-request timeout (default 2 s, `timeout=` in the URL), unsafe requests resolve, safe ones fail over | gaps during `pause` now ≤ 2.04 s = the timeout |
+| 3 | A leader that woke from a pause still believed it led and accepted queued resolves; raft dropped the proposals (`ErrProposalDropped`) and the server answered `Conflict` = "aborted", so the client re-ran a transaction the new leader had already committed | a write applied twice (`pause`: 3 registers in 560 k ops, `pause-dbg2`: 1; for counters or creates this is corruption) | 55fcea9c: a dropped proposal answers `NotLeader`; the client retries elsewhere | located with instrumented binaries (`pause-dbg*`, server `dbg resolve` lines absent for the three ids the client saw aborted); `TestDroppedResolveIsNotAnAbort` (leadership transfer to a stopped node keeps raft dropping proposals while the server is still ready) fails 3/3 on the old code |
+| 4 | A full disk only failed Pebble's background flushes; WAL writes continued into recycled files, memtables filled, writes stalled, the node kept leadership | ops up to 22.5 s while the leader's disk was full | 630faa83: any Pebble background error stops the node, as commit errors already did | `diskfull` → `diskfull-v2`: the full leader exits (`storage: … no space left on device`), max op 22.5 → 12.0 s, linearizable both; no unit test (fatal exit) |
+
+Runs (each 300 s unless noted; acked writes and creates, all with 0 lost and 0 failed):
+
+| Run | Code | Linearizable | Ops checked | Longest gap without a successful op | op p99 / max |
+|---|---|---|---|---|---|
+| `partition-oldserver` | 50b37e64 + client timeout | Ok | 623 992 | 1.77 s | 225 ms / 12.7 s |
+| `pause` | + lease | **Illegal** (bug 3) | 560 008 | 2.04 s | 258 ms / 8.4 s |
+| `partition`, `slowdisk`, `diskfull` | + lease | Ok, Ok, Ok | 614 928, 384 444, 475 814 | 1.99, 0.75, 1.40 s | ≤ 296 ms / 20.4, 21.4, 22.5 s |
+| `pause-dbg`, `pause-dbg2` (instrumented) | + lease | Ok, **Illegal** | 560 937, 549 206 | 2.04 s | 264 ms / 12.4 s |
+| `diskfull-v2` | 630faa83 | Ok | 455 777 | 2.39 s | 327 ms / 12.0 s |
+| `pause-v2-1..3` | 630faa83 | Ok ×3 | 551 178, 550 594, 560 207 | 2.04 s | ≤ 265 ms / ≤ 12.4 s |
+| `mix`, 600 s: 7 leader/follower isolations, 13 disk throttles, 5 pauses, 3 kill -9 | 630faa83 | Ok | 1 257 770 | 2.57 s | 224 ms / 26.6 s |
+
+Fleet (`rnd/fleet`, `LOAD=fleet`): N JuiceFS clients in one process, each with its own session (heartbeat 12 s, `NoBGJob` as on production mounts) and connection pool (2 connections); 20 % of them run create + close + lookup + unlink cycles at 10/s in their own directory under one of Q directory quotas; same three-node stand, 120 s measured.
+
+| Clients (active) | Quotas | Target / achieved cycles/s | Cycle p50 / p99 | Engine cores (3 nodes) | Peak memory (3 nodes) | Errors |
+|---|---|---|---|---|---|---|
+| 250 (50) | 100 | 500 / 497 | 15 / 34 ms | 0.62 | 664 MB | 0 |
+| 500 (100) | 100 | 1 000 / 987 | 29 / 126 ms | 1.02 | 1 039 MB | 0 |
+| 1 000 (200) | 100 | 2 000 / 1 874 | 72 / 275 ms | 1.15 | 1 437 MB | 0 |
+| 2 000 (400) | 100 | 4 000 / 1 520 | 239 / 651 ms | 1.08 | 1 764 MB | 0 |
+| 1 200 (240) | 1 200 | 2 400 / 1 872 | 116 / 361 ms | 1.11 | 1 423 MB | 0 |
+| 1 200 (240), 300 s with 11 isolations, 3 kills, 2 pauses | 100 | 2 400 / 1 755 | 106 / 363 ms, max 4.0 s | 1.16 | 2 048 MB (cap, page cache), 0 OOM | 0 |
+
+- Ceiling ≈ 1.9 k cycles/s = the leader on its single core (`GOMAXPROCS=1` in this stand); engine CPU per cycle stays ≈ 0.6 ms for all three nodes from 500 to 2 000 clients, so latency grows from saturation, not from per-client overhead (INFERENCE from the flat CPU per cycle).
+- 1 200 quotas cost the same as 100 (1 872 vs 1 874 cycles/s, 1.11 vs 1.15 cores): the C × Q refresh that hurts Redis-protocol engines is a range scan per heartbeat here.
+- Sessions for 2 000 clients come up in 1.7 s.
+- Memory per client (RUN, A/B/A/B, 2 000 heartbeat-only clients, 60 s): anon 169–189 MB for all three nodes with 64 KB or 16 KB server connection buffers alike, so buffers are not resident; growth under active load is page cache (670 MB file at 1 000 clients) and block caches filling (522 MB anon). The buffer change was dropped.
+
+Open: single operations can take 12–27 s across back-to-back faults (transaction retries with backoff on top of failover) although no gap without any successful op exceeded 2.6 s.

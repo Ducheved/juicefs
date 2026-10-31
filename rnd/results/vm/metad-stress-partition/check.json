@@ -1,0 +1,2 @@
+{"creates_acked":68844,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[14.11,1.816,33.2,1.681,52.28,1.974,72.37,1.708,95.45,1.604,115.53,1.244,138.61,1.955,160.7,1.08,179.78,1.987,200.85,1.927,219.93,1.684,240.01,1.57,261.1,1.219,284.17,1.416],"op_max_us":20440122,"op_p50_us":3435,"op_p99_us":236440,"reads":273466,"writes_acked":341462,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":614928}

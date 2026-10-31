@@ -1,0 +1,28 @@
+14:00:31.402 scenario pause duration 300s period 15s delay 50us disk 8:0
+14:00:31.405 start node 1 pid 141196
+14:00:31.408 start node 2 pid 141200
+14:00:31.411 start node 3 pid 141204
+14:00:34.481 checker pid 141230 workers 32 clients 4 keys 256
+14:00:49.530 pause leader node 3 for 2107 ms
+14:01:06.697 pause leader node 2 for 1974 ms
+14:01:23.725 pause leader node 3 for 2332 ms
+14:01:41.113 pause leader node 1 for 4194 ms
+14:02:00.361 pause leader node 3 for 2209 ms
+14:02:17.622 pause leader node 1 for 2387 ms
+14:02:35.063 pause leader node 2 for 2687 ms
+14:02:52.803 pause leader node 3 for 3319 ms
+14:03:11.177 pause leader node 1 for 2114 ms
+14:03:28.345 pause leader node 3 for 1752 ms
+14:03:45.155 pause leader node 1 for 4039 ms
+14:04:04.247 pause leader node 3 for 3982 ms
+14:04:23.281 pause leader node 1 for 2973 ms
+14:04:41.309 pause leader node 3 for 4163 ms
+14:05:00.526 pause leader node 1 for 3372 ms
+14:05:18.956 pause leader node 3 for 2694 ms
+14:05:39.764 checker exit 1
+{"creates_acked":62648,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[14.04,2.012,31.21,1.984,48.24,2.004,65.63,2.001,81.22,0.305,84.88,2.005,102.14,2.001,119.58,2.001,137.32,2,155.69,2.01,172.86,1.76,189.67,2.045,208.76,2.019,227.8,2.001,245.82,2.021,265.04,2,283.47,2.034],"op_max_us":8441422,"op_p50_us":3771,"op_p99_us":258256,"reads":248743,"writes_acked":311265,"writes_failed":0}
+{"linearizable":"Illegal","ops_checked":560008}
+14:05:39.822 cgroup peak 850 MB, oom_kills 0
+230M	/srv/stand/stand/stress-1
+230M	/srv/stand/stand/stress-2
+236M	/srv/stand/stand/stress-3

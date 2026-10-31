@@ -1,0 +1,1 @@
+{"active":50,"clients":250,"cycle_max_us":296640,"cycle_p50_us":15480,"cycle_p99_us":33535,"cycles":59634,"cycles_per_s":496.7012402553391,"errors":0,"heartbeat_s":12,"label":"fleet-c250-q100","measured_s":120.060098842,"prepare_s":0.823930642,"quotas":100,"sessions_up_s":0.364598239}

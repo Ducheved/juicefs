@@ -1,0 +1,29 @@
+13:48:38.929 scenario partition duration 300s period 12s delay 50us disk 8:0
+13:48:38.932 start node 1 pid 138382
+13:48:38.934 start node 2 pid 138386
+13:48:38.938 start node 3 pid 138390
+13:48:41.997 checker pid 138420 workers 32 clients 4 keys 256
+13:48:54.057 isolate leader node 2 from its peers for 4 s (clients still reach it)
+13:49:10.141 isolate leader node 3 from its peers for 4 s (clients still reach it)
+13:49:26.218 isolate leader node 2 from its peers for 3 s (clients still reach it)
+13:49:41.302 isolate leader node 3 from its peers for 5 s (clients still reach it)
+13:49:58.395 isolate leader node 2 from its peers for 4 s (clients still reach it)
+13:50:14.533 isolate leader node 3 from its peers for 5 s (clients still reach it)
+13:50:31.620 isolate leader node 2 from its peers for 8 s (clients still reach it)
+13:50:51.702 isolate leader node 3 from its peers for 3 s (clients still reach it)
+13:51:06.774 isolate leader node 2 from its peers for 8 s (clients still reach it)
+13:51:26.863 isolate leader node 3 from its peers for 3 s (clients still reach it)
+13:51:41.947 isolate leader node 2 from its peers for 6 s (clients still reach it)
+13:52:00.025 isolate leader node 3 from its peers for 4 s (clients still reach it)
+13:52:16.107 isolate leader node 2 from its peers for 7 s (clients still reach it)
+13:52:35.184 isolate leader node 3 from its peers for 5 s (clients still reach it)
+13:52:52.259 isolate leader node 2 from its peers for 5 s (clients still reach it)
+13:53:09.340 isolate leader node 3 from its peers for 8 s (clients still reach it)
+13:53:29.418 isolate leader node 2 from its peers for 4 s (clients still reach it)
+13:53:44.243 checker exit 0
+{"creates_acked":69768,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[11.08,1.544,27.17,1.773,43.25,1.68,58.33,1.509,75.42,1.626,91.57,1.47,108.65,1.377,128.73,1.322,143.8,1.66,163.89,1.553,178.97,1.694,197.05,1.594,213.14,1.742,232.21,1.634,249.28,1.499,266.37,1.688,286.44,1.591],"op_max_us":12672384,"op_p50_us":3370,"op_p99_us":224658,"reads":277251,"writes_acked":346741,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":623992}
+13:53:44.305 cgroup peak 1137 MB, oom_kills 0
+236M	/srv/stand/stand/stress-1
+237M	/srv/stand/stand/stress-2
+236M	/srv/stand/stand/stress-3

@@ -1,0 +1,30 @@
+14:15:52.351 scenario diskfull duration 300s period 15s delay 50us disk 8:0
+14:15:52.354 start node 1 pid 144010
+14:15:52.356 start node 2 pid 144014
+14:15:52.358 start node 3 pid 144018
+14:15:55.419 checker pid 144052 workers 32 clients 4 keys 256
+14:16:10.468 fill leader node 3 disk
+14:16:16.485 node 3 pid 144018 exited: 2026-10-31 14:16:14.443097 I | pebble: fatal commit error: write /srv/stand/stand/stress-3/db/000008.log: no space left on device
+14:16:16.493 start node 3 pid 144107
+14:16:31.548 fill leader node 2 disk
+14:16:37.566 node 2 pid 144014 exited: 2026-10-31 14:16:32.303174 I | pebble: fatal commit error: write /srv/stand/stand/stress-2/db/000009.log: no space left on device
+14:16:37.575 start node 2 pid 144159
+14:16:52.627 fill leader node 1 disk
+14:17:13.698 fill leader node 1 disk
+14:17:34.771 fill leader node 1 disk
+14:17:55.836 fill leader node 1 disk
+14:18:16.907 fill leader node 1 disk
+14:18:37.976 fill leader node 1 disk
+14:18:59.054 fill leader node 1 disk
+14:19:20.121 fill leader node 1 disk
+14:19:41.188 fill leader node 1 disk
+14:20:02.259 fill leader node 1 disk
+14:20:23.321 fill leader node 1 disk
+14:20:44.387 fill leader node 1 disk
+14:20:58.151 checker exit 0
+{"creates_acked":53438,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[17.52,1.039,35.38,1.396],"op_max_us":22531812,"op_p50_us":4315,"op_p99_us":292635,"reads":211393,"writes_acked":264421,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":475814}
+14:20:58.209 cgroup peak 1016 MB, oom_kills 0
+235M	/srv/stand/stand/stress-1
+91M	/srv/stand/stand/stress-2
+88M	/srv/stand/stand/stress-3

@@ -1,0 +1,30 @@
+15:23:52.710 scenario fleet-chaos duration 300s period 15s delay 50us disk 8:0
+15:23:52.713 start node 1 pid 153929
+15:23:52.716 start node 2 pid 153933
+15:23:52.718 start node 3 pid 153937
+15:23:55.776 fleet pid 153967 clients 1200 active 0.2 rate 10 quotas 100
+15:24:10.858 isolate leader node 1 from its peers for 3 s (clients still reach it)
+15:24:28.975 isolate leader node 3 from its peers for 5 s (clients still reach it)
+15:24:49.092 pause leader node 2 for 2776 ms
+15:25:06.950 isolate leader node 3 from its peers for 4 s (clients still reach it)
+15:25:26.066 isolate leader node 2 from its peers for 5 s (clients still reach it)
+15:25:46.176 isolate leader node 3 from its peers for 4 s (clients still reach it)
+15:26:05.288 pause leader node 2 for 3526 ms
+15:26:23.893 kill -9 leader node 1
+15:26:25.982 start node 1 pid 154186
+15:26:41.067 kill -9 leader node 3
+15:26:43.154 start node 3 pid 154218
+15:26:58.226 isolate leader node 2 from its peers for 7 s (clients still reach it)
+15:27:20.333 isolate leader node 3 from its peers for 3 s (clients still reach it)
+15:27:38.434 isolate leader node 2 from its peers for 3 s (clients still reach it)
+15:27:56.548 kill -9 leader node 3
+15:27:58.635 start node 3 pid 154328
+15:28:13.726 isolate leader node 1 from its peers for 6 s (clients still reach it)
+15:28:34.844 isolate leader node 3 from its peers for 3 s (clients still reach it)
+15:28:52.957 isolate leader node 2 from its peers for 7 s (clients still reach it)
+15:29:04.566 checker exit 0, engine cores 1.16
+{"active":240,"clients":1200,"cycle_max_us":4035268,"cycle_p50_us":105841,"cycle_p99_us":363230,"cycles":526572,"cycles_per_s":1754.6576559936332,"errors":0,"heartbeat_s":12,"label":"fleet-c1200-chaos","measured_s":300.099565406,"prepare_s":1.782830867,"quotas":100,"sessions_up_s":0.993316457}
+15:29:04.744 cgroup peak 2048 MB, oom_kills 0
+237M	/srv/stand/stand/stress-1
+403M	/srv/stand/stand/stress-2
+228M	/srv/stand/stand/stress-3

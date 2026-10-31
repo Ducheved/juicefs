@@ -1,0 +1,1 @@
+{"active":240,"clients":1200,"cycle_max_us":4035268,"cycle_p50_us":105841,"cycle_p99_us":363230,"cycles":526572,"cycles_per_s":1754.6576559936332,"errors":0,"heartbeat_s":12,"label":"fleet-c1200-chaos","measured_s":300.099565406,"prepare_s":1.782830867,"quotas":100,"sessions_up_s":0.993316457}

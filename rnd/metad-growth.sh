@@ -23,7 +23,8 @@ else
   stop() { metad_stop $CG; }
   rss() { echo $(( $(ps -o rss= -p $METAD_PID) / 1024 )); }
 fi
-echo "metad replicas=$REPLICAS mem=$MEM cache_mb=${METAD_CACHE_MB:-default} engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
+nodes() { [ -d $CG/n1 ] && for i in 1 2 3; do printf " n%d_now_mb=%d n%d_peak_mb=%d" $i $(cg_mb $CG/n$i memory.current) $i $(cg_mb $CG/n$i memory.peak); done; true; }
+echo "metad replicas=$REPLICAS node_mem=${NODE_MEM:-shared} mem=$MEM cache_mb=${METAD_CACHE_MB:-default} engine_cpus=$ENGINE_CPUS load_cpus=$LOAD_CPUS"
 probe() {
   local users=$1 label=$2 c0 c1
   c0=$(cg_cpu_us $CG)
@@ -39,7 +40,7 @@ for r in $(seq 0 $((ROUNDS - 1))); do
   t1=$(date +%s); c1=$(cg_cpu_us $CG)
   files=$(( (r + 1) * 1000000 ))
   d=$(du -scb $DIRS_GLOB | tail -1 | awk '{print $1}')
-  echo "round=$r files=$files gen_s=$((t1 - t0)) gen_server_cpu_s=$(( (c1 - c0) / 1000000 )) dir_bytes=$d b_per_file=$((d / files)) cg_now_mb=$(cg_mb $CG memory.current) cg_peak_mb=$(cg_mb $CG memory.peak) rss_mb=$(rss) anon_mb=$(( $(awk '/^anon /{print $2}' $CG/memory.stat) / 1048576 )) file_mb=$(( $(awk '/^file /{print $2}' $CG/memory.stat) / 1048576 )) oom_kills=$(cg_oom $CG)"
+  echo "round=$r files=$files gen_s=$((t1 - t0)) gen_server_cpu_s=$(( (c1 - c0) / 1000000 )) dir_bytes=$d b_per_file=$((d / files)) cg_now_mb=$(cg_mb $CG memory.current) cg_peak_mb=$(cg_mb $CG memory.peak) rss_mb=$(rss) anon_mb=$(( $(awk '/^anon /{print $2}' $CG/memory.stat) / 1048576 )) file_mb=$(( $(awk '/^file /{print $2}' $CG/memory.stat) / 1048576 )) oom_kills=$(cg_oom $CG)$(nodes)"
   probe 1 "r$r-hot10k"
   probe $(( (r + 1) * 100 )) "r$r-all"
 done

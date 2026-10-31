@@ -1,0 +1,24 @@
+14:10:46.217 scenario slowdisk duration 300s period 15s delay 50us disk 8:0
+14:10:46.220 start node 1 pid 143059
+14:10:46.222 start node 2 pid 143063
+14:10:46.225 start node 3 pid 143067
+14:10:49.287 checker pid 143093 workers 32 clients 4 keys 256
+14:11:04.338 throttle leader node 1 disk to 20 write iops for 10 s
+14:11:29.390 throttle leader node 1 disk to 20 write iops for 10 s
+14:11:54.436 throttle leader node 1 disk to 20 write iops for 10 s
+14:12:19.489 throttle leader node 1 disk to 20 write iops for 10 s
+14:12:44.539 throttle leader node 1 disk to 20 write iops for 10 s
+14:13:09.605 throttle leader node 1 disk to 20 write iops for 10 s
+14:13:34.659 throttle leader node 1 disk to 20 write iops for 10 s
+14:13:59.710 throttle leader node 1 disk to 20 write iops for 10 s
+14:14:24.760 throttle leader node 1 disk to 20 write iops for 10 s
+14:14:49.814 throttle leader node 1 disk to 20 write iops for 10 s
+14:15:14.866 throttle leader node 1 disk to 20 write iops for 10 s
+14:15:39.915 throttle leader node 1 disk to 20 write iops for 10 s
+14:15:51.944 checker exit 0
+{"creates_acked":43066,"creates_failed":2,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[17.37,0.2,45.82,0.2,65.26,0.304,66.26,0.303,68.26,0.303,72.46,0.2,91.81,0.2,95.92,0.2,96.52,0.2,114.27,0.204,118.17,0.2,118.47,0.2,119.77,0.201,123.17,0.2,123.77,0.204,139.33,0.203,141.94,0.207,142.24,0.496,142.74,0.202,144.24,0.2,144.54,0.2,145.84,0.201,146.24,0.201,147.84,0.2,162.81,0.437,164.39,0.205,165.39,0.294,168.19,0.2,168.79,0.2,169.09,0.2,171.19,0.295,189.44,0.202,189.84,0.2,191.34,0.2,191.84,0.2,194.24,0.2,215.19,0.2,218.99,0.2,219.89,0.2,224.19,0.295,239.54,0.2,241.05,0.295,241.34,0.2,247.94,0.2,266,0.2,268.69,0.2,271.49,0.2,272.2,0.2,273.89,0.2,274.2,0.2,290.85,0.2,291.45,0.2,293.45,0.2,294.65,0.2,296.85,0.2,300.16,0.749],"op_max_us":21356231,"op_p50_us":3795,"op_p99_us":295805,"reads":170918,"writes_acked":213526,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":384444}
+14:15:51.995 cgroup peak 610 MB, oom_kills 0
+226M	/srv/stand/stand/stress-1
+226M	/srv/stand/stand/stress-2
+226M	/srv/stand/stand/stress-3

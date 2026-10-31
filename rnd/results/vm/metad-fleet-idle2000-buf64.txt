@@ -1,0 +1,11 @@
+15:30:59.432 scenario fleet duration 60s period 15s delay 50us disk 8:0
+15:30:59.435 start node 1 pid 155635
+15:30:59.438 start node 2 pid 155639
+15:30:59.441 start node 3 pid 155643
+15:31:02.504 fleet pid 155673 clients 2000 active 0 rate 10 quotas 100
+15:31:09.591 checker exit 0, anon 169 MB, file 8 MB, engine cores 0.71
+{"active":0,"clients":2000,"cycle_max_us":0,"cycle_p50_us":0,"cycle_p99_us":0,"cycles":0,"cycles_per_s":0,"errors":0,"heartbeat_s":12,"label":"fleet-idle2000-buf64","measured_s":1.1e-7,"prepare_s":0.624071464,"quotas":100,"sessions_up_s":1.959365104}
+15:31:09.628 cgroup peak 189 MB, oom_kills 0
+177M	/srv/stand/stand/stress-1
+177M	/srv/stand/stand/stress-2
+177M	/srv/stand/stand/stress-3

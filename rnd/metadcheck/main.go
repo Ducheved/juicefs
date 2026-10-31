@@ -87,6 +87,7 @@ func main() {
 	url := flag.String("meta", "", "metad url")
 	workers := flag.Int("workers", 16, "concurrent clients")
 	keys := flag.Int("keys", 8, "registers")
+	clients := flag.Int("clients", 1, "independent meta clients, each with its own leader view")
 	duration := flag.Duration("duration", time.Minute, "workload duration")
 	out := flag.String("out", "", "directory for the history visualisation on failure")
 	leader := flag.Bool("find-leader", false, "print the index of the ready leader among the addresses")
@@ -97,13 +98,17 @@ func main() {
 		return
 	}
 
-	m := meta.NewClient("metad://"+*url, meta.DefaultConf())
-	if _, err := m.Load(true); err != nil {
-		log.Fatalf("load: %s", err)
+	ms := make([]meta.Meta, *clients)
+	for i := range ms {
+		ms[i] = meta.NewClient("metad://"+*url, meta.DefaultConf())
+		if _, err := ms[i].Load(true); err != nil {
+			log.Fatalf("load: %s", err)
+		}
+		if err := ms[i].NewSession(true); err != nil {
+			log.Fatalf("session: %s", err)
+		}
 	}
-	if err := m.NewSession(true); err != nil {
-		log.Fatalf("session: %s", err)
-	}
+	m := ms[0]
 	ctx := meta.Background()
 	var attr meta.Attr
 	var dir, setDir meta.Ino
@@ -134,6 +139,7 @@ func main() {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
+			m := ms[w%len(ms)]
 			rng := rand.New(rand.NewSource(int64(w)))
 			for i := 0; time.Since(start) < *duration; i++ {
 				k := rng.Intn(*keys)
@@ -245,18 +251,18 @@ func main() {
 		return lat[int(float64(len(lat)-1)*p)].Microseconds()
 	}
 	res := map[string]any{
-		"writes_acked":      writes,
-		"writes_failed":     failedWrites,
-		"reads":             reads,
-		"creates_acked":     ackedCreates,
-		"creates_lost":      lostCreates,
-		"creates_failed":    unknownCreates,
-		"failed_but_exist":  unknownPresent,
-		"op_p50_us":         pct(0.5),
-		"op_p99_us":         pct(0.99),
-		"op_max_us":         pct(1),
-		"gaps_at_s_len_s":   gaps,
-		"duration_s":        duration.Seconds(),
+		"writes_acked":     writes,
+		"writes_failed":    failedWrites,
+		"reads":            reads,
+		"creates_acked":    ackedCreates,
+		"creates_lost":     lostCreates,
+		"creates_failed":   unknownCreates,
+		"failed_but_exist": unknownPresent,
+		"op_p50_us":        pct(0.5),
+		"op_p99_us":        pct(0.99),
+		"op_max_us":        pct(1),
+		"gaps_at_s_len_s":  gaps,
+		"duration_s":       duration.Seconds(),
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(res)
 	result, info := porcupine.CheckOperationsVerbose(registerModel, ops, 10*time.Minute)

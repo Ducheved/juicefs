@@ -1,0 +1,26 @@
+14:05:40.187 scenario partition duration 300s period 15s delay 50us disk 8:0
+14:05:40.190 start node 1 pid 142160
+14:05:40.193 start node 2 pid 142164
+14:05:40.196 start node 3 pid 142168
+14:05:43.258 checker pid 142199 workers 32 clients 4 keys 256
+14:05:58.311 isolate leader node 3 from its peers for 4 s (clients still reach it)
+14:06:17.400 isolate leader node 2 from its peers for 4 s (clients still reach it)
+14:06:36.486 isolate leader node 3 from its peers for 5 s (clients still reach it)
+14:06:56.577 isolate leader node 2 from its peers for 8 s (clients still reach it)
+14:07:19.659 isolate leader node 3 from its peers for 5 s (clients still reach it)
+14:07:39.738 isolate leader node 2 from its peers for 8 s (clients still reach it)
+14:08:02.816 isolate leader node 3 from its peers for 7 s (clients still reach it)
+14:08:24.904 isolate leader node 2 from its peers for 4 s (clients still reach it)
+14:08:43.981 isolate leader node 3 from its peers for 6 s (clients still reach it)
+14:09:05.058 isolate leader node 2 from its peers for 4 s (clients still reach it)
+14:09:24.135 isolate leader node 3 from its peers for 5 s (clients still reach it)
+14:09:44.216 isolate leader node 2 from its peers for 6 s (clients still reach it)
+14:10:05.300 isolate leader node 3 from its peers for 8 s (clients still reach it)
+14:10:28.378 isolate leader node 2 from its peers for 5 s (clients still reach it)
+14:10:45.788 checker exit 0
+{"creates_acked":68844,"creates_failed":0,"creates_lost":0,"duration_s":300,"failed_but_exist":0,"gaps_at_s_len_s":[14.11,1.816,33.2,1.681,52.28,1.974,72.37,1.708,95.45,1.604,115.53,1.244,138.61,1.955,160.7,1.08,179.78,1.987,200.85,1.927,219.93,1.684,240.01,1.57,261.1,1.219,284.17,1.416],"op_max_us":20440122,"op_p50_us":3435,"op_p99_us":236440,"reads":273466,"writes_acked":341462,"writes_failed":0}
+{"linearizable":"Ok","ops_checked":614928}
+14:10:45.851 cgroup peak 1117 MB, oom_kills 0
+236M	/srv/stand/stand/stress-1
+237M	/srv/stand/stand/stress-2
+237M	/srv/stand/stand/stress-3
