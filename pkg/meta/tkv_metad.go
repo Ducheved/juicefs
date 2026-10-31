@@ -45,9 +45,10 @@ type metadConn struct {
 }
 
 type metadPool struct {
-	addr  string
-	idle  chan *metadConn
-	slots chan struct{}
+	addr    string
+	timeout time.Duration
+	idle    chan *metadConn
+	slots   chan struct{}
 }
 
 type metadClient struct {
@@ -74,11 +75,17 @@ func newMetadClient(addr string) (tkvClient, error) {
 			return nil, fmt.Errorf("invalid failover %q", v)
 		}
 	}
+	timeout := 2 * time.Second
+	if v := u.Query().Get("timeout"); v != "" {
+		if timeout, err = time.ParseDuration(v); err != nil || timeout <= 0 {
+			return nil, fmt.Errorf("invalid timeout %q", v)
+		}
+	}
 	for _, h := range strings.Split(hosts, ",") {
 		if h == "" {
 			return nil, fmt.Errorf("empty address in %s", addr)
 		}
-		c.pools = append(c.pools, &metadPool{addr: h, idle: make(chan *metadConn, conns), slots: make(chan struct{}, conns)})
+		c.pools = append(c.pools, &metadPool{addr: h, timeout: timeout, idle: make(chan *metadConn, conns), slots: make(chan struct{}, conns)})
 	}
 	if _, _, err := c.call(proto.NewEncoder(proto.OpPing).Frame(), true); err != nil {
 		return nil, fmt.Errorf("ping metad %s: %s", hosts, err)
@@ -121,8 +128,10 @@ func (p *metadPool) roundTrip(frame []byte) (byte, []byte, bool, error) {
 	if err != nil {
 		return 0, nil, false, err
 	}
-	if _, err = cn.w.Write(frame); err == nil {
-		err = cn.w.Flush()
+	if err = cn.c.SetDeadline(time.Now().Add(p.timeout)); err == nil {
+		if _, err = cn.w.Write(frame); err == nil {
+			err = cn.w.Flush()
+		}
 	}
 	var status byte
 	var body []byte
