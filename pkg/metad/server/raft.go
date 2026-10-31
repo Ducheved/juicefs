@@ -17,6 +17,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -418,11 +419,18 @@ func applyWrites(b *pebble.Batch, ws []proto.Write) error {
 }
 
 func (s *Server) expireTxns(b *pebble.Batch, now int64) error {
-	edge := now - s.opts.DedupWindow.Nanoseconds()
+	edge := (now - s.opts.DedupWindow.Nanoseconds()) / int64(time.Second) * int64(time.Second)
 	if edge <= 0 {
 		return nil
 	}
-	it, err := b.NewIter(&pebble.IterOptions{LowerBound: prefixExpiry, UpperBound: expiryKey(edge, nil)})
+	lower, upper := s.expired, expiryKey(edge, nil)
+	if lower == nil {
+		lower = prefixExpiry
+	}
+	if bytes.Compare(lower, upper) >= 0 {
+		return nil
+	}
+	it, err := b.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
 	}
@@ -445,6 +453,7 @@ func (s *Server) expireTxns(b *pebble.Batch, now int64) error {
 			return err
 		}
 	}
+	s.expired = upper
 	return nil
 }
 

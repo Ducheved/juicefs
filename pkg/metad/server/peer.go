@@ -403,6 +403,7 @@ func (s *Server) copyStaged(staged *pebble.DB, meta raftpb.SnapshotMetadata, mar
 	if err != nil {
 		return err
 	}
+	s.expired = nil
 	last, err := readU64(s.db, keyLastTime)
 	if err != nil {
 		return err

@@ -82,6 +82,7 @@ type Server struct {
 	peers   map[uint64]*peer
 	pending chan *request
 	applyMu sync.Mutex
+	expired []byte
 	install sync.Mutex
 
 	mu        sync.Mutex

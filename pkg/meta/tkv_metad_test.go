@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,14 +35,15 @@ type metadCluster struct {
 	t       *testing.T
 	ttl     time.Duration
 	retain  uint64
+	dedup   time.Duration
 	dirs    []string
 	addrs   []string
 	peers   map[uint64]string
 	servers []*server.Server
 }
 
-func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64) *metadCluster {
-	c := &metadCluster{t: t, ttl: ttl, retain: retain, peers: make(map[uint64]string), servers: make([]*server.Server, n)}
+func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64, dedup time.Duration) *metadCluster {
+	c := &metadCluster{t: t, ttl: ttl, retain: retain, dedup: dedup, peers: make(map[uint64]string), servers: make([]*server.Server, n)}
 	lns := make([]net.Listener, n)
 	for i := range lns {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -65,7 +68,7 @@ func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64) *met
 
 func (c *metadCluster) serve(i int, ln net.Listener) {
 	s, err := server.Open(server.Options{Dir: c.dirs[i], CacheMB: 64, MemtableMB: 8, SnapshotTTL: c.ttl, MaxBatch: 1024,
-		ID: uint64(i + 1), Peers: c.peers, Tick: 20 * time.Millisecond, LogRetain: c.retain, DedupWindow: time.Minute})
+		ID: uint64(i + 1), Peers: c.peers, Tick: 20 * time.Millisecond, LogRetain: c.retain, DedupWindow: c.dedup})
 	if err != nil {
 		c.t.Fatalf("open metad %d: %s", i+1, err)
 	}
@@ -107,7 +110,7 @@ func (c *metadCluster) url(path string) string {
 }
 
 func startMetad(t *testing.T, ttl time.Duration) string {
-	return newMetadCluster(t, 1, ttl, 1000).url("")
+	return newMetadCluster(t, 1, ttl, 1000, time.Minute).url("")
 }
 
 func TestMetadKV(t *testing.T) {
@@ -119,7 +122,7 @@ func TestMetadKV(t *testing.T) {
 }
 
 func TestMetadClient(t *testing.T) {
-	m, err := newKVMeta("metad", newMetadCluster(t, 3, 5*time.Second, 1000).url("/jfs-unit-test"), testConfig())
+	m, err := newKVMeta("metad", newMetadCluster(t, 3, 5*time.Second, 1000, time.Minute).url("/jfs-unit-test"), testConfig())
 	if err != nil || m.Name() != "metad" {
 		t.Fatalf("create meta: %s", err)
 	}
@@ -276,7 +279,7 @@ func metadGet(t *testing.T, c tkvClient, key string) string {
 }
 
 func TestMetadFailover(t *testing.T) {
-	mc := newMetadCluster(t, 3, 5*time.Second, 1000)
+	mc := newMetadCluster(t, 3, 5*time.Second, 1000, time.Minute)
 	c, err := newMetadClient(mc.url("/jfs"))
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +307,7 @@ func TestMetadFailover(t *testing.T) {
 }
 
 func TestMetadSnapshotInstall(t *testing.T) {
-	mc := newMetadCluster(t, 3, 5*time.Second, 20)
+	mc := newMetadCluster(t, 3, 5*time.Second, 20, time.Minute)
 	c, err := newMetadClient(mc.url("/jfs"))
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +377,7 @@ func metadResolve(t *testing.T, addr string, id []byte) byte {
 }
 
 func TestMetadResolve(t *testing.T) {
-	mc := newMetadCluster(t, 1, 5*time.Second, 1000)
+	mc := newMetadCluster(t, 1, 5*time.Second, 1000, time.Minute)
 	addr := mc.addrs[0]
 	c, err := newMetadClient(addr)
 	if err != nil {
@@ -424,5 +427,38 @@ func TestMetadResolve(t *testing.T) {
 	err = c.(*metadClient).commit(id, write(id, "r4"))
 	if err != nil || metadGet(t, c, "r4") != "x" {
 		t.Fatalf("client commit: %v", err)
+	}
+}
+
+func TestMetadExpiryThroughput(t *testing.T) {
+	c, err := newMetadClient(newMetadCluster(t, 1, 5*time.Second, 1000, 200*time.Millisecond).url("/x?conns=16"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := func(w int, d time.Duration) int {
+		var n atomic.Int64
+		stop := time.Now().Add(d)
+		var wg sync.WaitGroup
+		for g := 0; g < 16; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				for i := 0; time.Now().Before(stop); i++ {
+					if err := metadSet(c, fmt.Sprintf("w%d-%d-%d", w, g, i), "v"); err != nil {
+						t.Errorf("set: %s", err)
+						return
+					}
+					n.Add(1)
+				}
+			}(g)
+		}
+		wg.Wait()
+		return int(n.Load())
+	}
+	first := rate(0, time.Second)
+	rate(1, 4*time.Second)
+	last := rate(2, time.Second)
+	if last*3 < first {
+		t.Fatalf("throughput fell from %d to %d txn/s once transaction records expire", first, last)
 	}
 }
