@@ -123,6 +123,9 @@ func Open(opts Options) (*Server, error) {
 	}
 	cache := pebble.NewCache(opts.CacheMB << 20)
 	po := &pebble.Options{Cache: cache, MemTableSize: opts.MemtableMB << 20, MemTableStopWritesThreshold: 4}
+	po.EventListener = &pebble.EventListener{BackgroundError: func(err error) {
+		logger.Fatalf("metad: node %d: storage: %s", opts.ID, err)
+	}}
 	po.EnsureDefaults()
 	for i := range po.Levels {
 		po.Levels[i].FilterPolicy = bloom.FilterPolicy(10)
