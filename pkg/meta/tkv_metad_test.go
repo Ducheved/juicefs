@@ -36,6 +36,9 @@ type metadCluster struct {
 	ttl     time.Duration
 	retain  uint64
 	dedup   time.Duration
+	netMu   sync.Mutex
+	cut     map[int]bool
+	links   map[int][]net.Conn
 	dirs    []string
 	addrs   []string
 	peers   map[uint64]string
@@ -43,7 +46,8 @@ type metadCluster struct {
 }
 
 func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64, dedup time.Duration) *metadCluster {
-	c := &metadCluster{t: t, ttl: ttl, retain: retain, dedup: dedup, peers: make(map[uint64]string), servers: make([]*server.Server, n)}
+	c := &metadCluster{t: t, ttl: ttl, retain: retain, dedup: dedup, peers: make(map[uint64]string), servers: make([]*server.Server, n),
+		cut: make(map[int]bool), links: make(map[int][]net.Conn)}
 	lns := make([]net.Listener, n)
 	for i := range lns {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -68,12 +72,46 @@ func newMetadCluster(t *testing.T, n int, ttl time.Duration, retain uint64, dedu
 
 func (c *metadCluster) serve(i int, ln net.Listener) {
 	s, err := server.Open(server.Options{Dir: c.dirs[i], CacheMB: 64, MemtableMB: 8, SnapshotTTL: c.ttl, MaxBatch: 1024,
-		ID: uint64(i + 1), Peers: c.peers, Tick: 20 * time.Millisecond, LogRetain: c.retain, DedupWindow: c.dedup})
+		ID: uint64(i + 1), Peers: c.peers, Tick: 20 * time.Millisecond, LogRetain: c.retain, DedupWindow: c.dedup, Dial: c.dial(i)})
 	if err != nil {
 		c.t.Fatalf("open metad %d: %s", i+1, err)
 	}
 	c.servers[i] = s
 	go func() { _ = s.Serve(ln) }()
+}
+
+func (c *metadCluster) dial(from int) func(network, addr string, timeout time.Duration) (net.Conn, error) {
+	return func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		to := -1
+		for i, a := range c.addrs {
+			if a == addr {
+				to = i
+			}
+		}
+		c.netMu.Lock()
+		defer c.netMu.Unlock()
+		if c.cut[from] || c.cut[to] {
+			return nil, errors.New("partitioned")
+		}
+		nc, err := net.DialTimeout(network, addr, timeout)
+		if err == nil {
+			c.links[from] = append(c.links[from], nc)
+			c.links[to] = append(c.links[to], nc)
+		}
+		return nc, err
+	}
+}
+
+func (c *metadCluster) isolate(i int, on bool) {
+	c.netMu.Lock()
+	defer c.netMu.Unlock()
+	c.cut[i] = on
+	if on {
+		for _, nc := range c.links[i] {
+			_ = nc.Close()
+		}
+		c.links[i] = nil
+	}
 }
 
 func (c *metadCluster) stop(i int) {
@@ -460,5 +498,49 @@ func TestMetadExpiryThroughput(t *testing.T) {
 	last := rate(2, time.Second)
 	if last*3 < first {
 		t.Fatalf("throughput fell from %d to %d txn/s once transaction records expire", first, last)
+	}
+}
+
+func TestMetadLeaseRead(t *testing.T) {
+	mc := newMetadCluster(t, 3, 5*time.Second, 1000, time.Minute)
+	a, err := newMetadClient(mc.url(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 10; round++ {
+		old, fresh := fmt.Sprintf("old%d", round), fmt.Sprintf("new%d", round)
+		if err := metadSet(a, "k", old); err != nil {
+			t.Fatal(err)
+		}
+		l := mc.leader()
+		if v := metadGet(t, a, "k"); v != old {
+			t.Fatalf("round %d: read %q, expect %q", round, v, old)
+		}
+		mc.isolate(l, true)
+		var rest []string
+		for i, addr := range mc.addrs {
+			if i != l {
+				rest = append(rest, addr)
+			}
+		}
+		b, err := newMetadClient(strings.Join(rest, ","))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := metadSet(b, "k", fresh); err != nil {
+			t.Fatal(err)
+		}
+		if v := metadGet(t, a, "k"); v != fresh {
+			t.Fatalf("round %d: read %q through the isolated leader after %q was committed by the new one", round, v, fresh)
+		}
+		_ = b.close()
+		mc.isolate(l, false)
+		deadline := time.Now().Add(10 * time.Second)
+		for mc.servers[l].Status().Applied < mc.servers[mc.leader()].Status().Applied {
+			if time.Now().After(deadline) {
+				t.Fatalf("round %d: node %d did not catch up", round, l+1)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }

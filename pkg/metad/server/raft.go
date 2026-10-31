@@ -104,6 +104,8 @@ type applyResult struct {
 	done  []proposalDone
 }
 
+const electionTicks = 10
+
 func (s *Server) start() error {
 	log, err := openLog(s.db)
 	if err != nil {
@@ -126,7 +128,7 @@ func (s *Server) start() error {
 	s.lastTime = int64(last)
 	cfg := &raft.Config{
 		ID:                        s.opts.ID,
-		ElectionTick:              10,
+		ElectionTick:              electionTicks,
 		HeartbeatTick:             1,
 		Storage:                   s.log,
 		Applied:                   s.applied,
@@ -160,10 +162,11 @@ func (s *Server) start() error {
 		s.wg.Add(1)
 		go s.sendLoop(p)
 	}
-	s.wg.Add(3)
+	s.wg.Add(4)
 	go s.run()
 	go s.commitLoop()
 	go s.expireLoop()
+	go s.leaseLoop()
 	return nil
 }
 
@@ -188,6 +191,9 @@ func (s *Server) run() {
 func (s *Server) handleReady(rd raft.Ready) error {
 	if rd.SoftState != nil {
 		s.setRole(rd.SoftState)
+	}
+	if len(rd.ReadStates) > 0 {
+		s.renew(rd.ReadStates)
 	}
 	s.mu.Lock()
 	if !raft.IsEmptyHardState(rd.HardState) {
@@ -510,6 +516,9 @@ func (s *Server) setRole(ss *raft.SoftState) {
 	s.mu.Lock()
 	s.lead = ss.Lead
 	leader := ss.RaftState == raft.StateLeader
+	if leader != s.leader {
+		s.lease = time.Time{}
+	}
 	if !leader {
 		s.ready = false
 		for prop, reqs := range s.waiters {

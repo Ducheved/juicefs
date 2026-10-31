@@ -89,7 +89,7 @@ func (s *Server) sendLoop(p *peer) {
 			return
 		}
 		if pc == nil {
-			c, err := net.DialTimeout("tcp", p.addr, time.Second)
+			c, err := s.opts.Dial("tcp", p.addr, time.Second)
 			if err != nil {
 				drop()
 				continue
@@ -133,7 +133,7 @@ func (s *Server) streamSnapshot(addr string, m raftpb.Message) error {
 	}
 	snap := s.db.NewSnapshot()
 	defer snap.Close()
-	c, err := net.DialTimeout("tcp", addr, time.Second)
+	c, err := s.opts.Dial("tcp", addr, time.Second)
 	if err != nil {
 		return err
 	}

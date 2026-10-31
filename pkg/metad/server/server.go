@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -47,6 +48,7 @@ type Options struct {
 	Tick        time.Duration
 	LogRetain   uint64
 	DedupWindow time.Duration
+	Dial        func(network, addr string, timeout time.Duration) (net.Conn, error)
 }
 
 type snapshot struct {
@@ -92,6 +94,9 @@ type Server struct {
 	lead      uint64
 	leader    bool
 	ready     bool
+	epoch     time.Time
+	lease     time.Time
+	renewed   chan struct{}
 	base      uint64
 	current   *snapshot
 	snapshots map[uint64]*snapshot
@@ -127,6 +132,9 @@ func Open(opts Options) (*Server, error) {
 		cache.Unref()
 		return nil, err
 	}
+	if opts.Dial == nil {
+		opts.Dial = net.DialTimeout
+	}
 	s := &Server{
 		opts:      opts,
 		db:        db,
@@ -137,6 +145,8 @@ func Open(opts Options) (*Server, error) {
 		recent:    btree.NewG(32, func(a, b written) bool { return bytes.Compare(a.key, b.key) < 0 }),
 		prop:      uint64(time.Now().UnixNano()),
 		waiters:   make(map[uint64][]*request),
+		epoch:     time.Now(),
+		renewed:   make(chan struct{}),
 		conns:     make(map[net.Conn]struct{}),
 		stop:      make(chan struct{}),
 	}
@@ -305,6 +315,18 @@ func (s *Server) acquire(seq uint64) (*snapshot, error) {
 	}
 	var sn *snapshot
 	if seq == 0 {
+		if !time.Now().Before(s.lease) {
+			renewed := s.renewed
+			s.mu.Unlock()
+			select {
+			case <-renewed:
+			case <-time.After(2 * s.opts.Tick):
+			}
+			s.mu.Lock()
+			if s.closed || !s.ready || !time.Now().Before(s.lease) {
+				return nil, errNotLeader
+			}
+		}
 		if s.current == nil || s.current.seq != s.applied {
 			s.current = &snapshot{seq: s.applied, snap: s.db.NewSnapshot()}
 			s.snapshots[s.current.seq] = s.current
@@ -625,6 +647,44 @@ func (s *Server) propose(reqs []*request) {
 	if ok {
 		for _, r := range waiting {
 			r.done <- status
+		}
+	}
+}
+
+func (s *Server) leaseLoop() {
+	defer s.wg.Done()
+	t := time.NewTicker(s.opts.Tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			s.mu.Lock()
+			leader := s.leader
+			s.mu.Unlock()
+			if !leader {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), s.opts.Tick)
+			_ = s.node.ReadIndex(ctx, binary.BigEndian.AppendUint64(nil, uint64(time.Since(s.epoch))))
+			cancel()
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+func (s *Server) renew(states []raft.ReadState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rs := range states {
+		if !s.leader || len(rs.RequestCtx) != 8 {
+			continue
+		}
+		until := s.epoch.Add(time.Duration(binary.BigEndian.Uint64(rs.RequestCtx)) + (electionTicks-2)*s.opts.Tick)
+		if until.After(s.lease) {
+			s.lease = until
+			close(s.renewed)
+			s.renewed = make(chan struct{})
 		}
 	}
 }
